@@ -1,0 +1,17 @@
+services:
+  vorrat:
+    image: ghcr.io/noronus/vorrat:latest
+    # Selbst bauen statt das fertige Image zu laden:
+    # build: .
+    container_name: vorrat
+    restart: unless-stopped
+    user: "1000:1000"            # muss in ./data schreiben dürfen (Unraid: 99:100)
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    ports:
+      - "8095:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      TZ: Europe/Berlin
+      # TRUST_PROXY: "false"     # setzen, wenn kein Reverse-Proxy davor steht

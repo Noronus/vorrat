@@ -1,0 +1,22 @@
+{
+  "name": "Vorrat",
+  "short_name": "Vorrat",
+  "description": "Lebensmittel-Inventar mit Ablauf-Erinnerung, Essensplan und Einkaufsliste",
+  "lang": "de",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f6f1",
+  "theme_color": "#2f7d4f",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Scannen", "url": "/#scan" },
+    { "name": "Einkaufsliste", "url": "/#einkauf" }
+  ]
+}

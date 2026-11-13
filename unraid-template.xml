@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Vorrat</Name>
+  <Repository>ghcr.io/noronus/vorrat:latest</Repository>
+  <Registry>https://github.com/Noronus/vorrat/pkgs/container/vorrat</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <MyMAC/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Noronus/vorrat/issues</Support>
+  <Project>https://github.com/Noronus/vorrat</Project>
+  <ReadMe/>
+  <Overview>Lebensmittel-Inventar mit Barcode-Scan, Ablauf-Erinnerungen, Rezepten, Essensplan (Claude) und Einkaufsliste.  Die Daten liegen in /mnt/user/appdata/vorrat (SQLite-Datei vorrat.db). Das Claude-Token wird in der App unter Mehr eingetragen.</Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/Noronus/vorrat/main/unraid-template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/Noronus/vorrat/main/web/public/icon-192.png</Icon>
+  <ExtraParams>--user=99:100 --restart=unless-stopped --cap-drop=ALL --security-opt=no-new-privileges</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI-Port" Target="8080" Default="8095" Mode="tcp" Description="Port im LAN (http://SERVER-IP:PORT/). Der Reverse-Proxy zeigt hierauf." Type="Port" Display="always" Required="true" Mask="false">8095</Config>
+  <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/vorrat" Mode="rw" Description="Datenbank vorrat.db und Arbeitsverzeichnis der Claude-CLI" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vorrat</Config>
+  <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Für Ablaufdaten und die Uhrzeit der Erinnerung" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>

@@ -1,0 +1,10 @@
+node_modules
+dist
+data
+.env
+android/build
+*.keystore
+deploy.env
+*.db
+*.db-shm
+*.db-wal

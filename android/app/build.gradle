@@ -1,0 +1,44 @@
+plugins { id 'com.android.application' }
+
+// Eigener Schlüssel, damit Updates über die installierte App passen (liegt nur lokal, nicht im Git)
+def ks = new Properties()
+def ksFile = rootProject.file('keystore.properties')
+if (ksFile.exists()) ksFile.withInputStream { ks.load(it) }
+
+android {
+    namespace 'app.vorrat.android'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'app.vorrat.android'
+        minSdk 30
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
+    }
+    signingConfigs {
+        own {
+            if (ksFile.exists()) {
+                storeFile rootProject.file(ks['storeFile'])
+                storePassword ks['password']
+                keyAlias 'vorrat'
+                keyPassword ks['password']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.own
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'androidx.work:work-runtime:2.10.0'
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+}
