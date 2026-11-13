@@ -4,6 +4,15 @@ Selbst gehostetes Lebensmittel-Inventar für den Haushalt: Barcode scannen, Fül
 
 *Self-hosted pantry inventory with barcode scanning, expiry reminders, recipes, meal planning via Claude and shopping lists. The interface is German only.*
 
+<p>
+  <img src="docs/vorrat.png" width="200" alt="Vorratsliste mit Füllstand und Ablaufdatum">
+  <img src="docs/eintrag.png" width="200" alt="Eintrag bearbeiten: Packungen, Füllstand, Haltbarkeit">
+  <img src="docs/kochen.png" width="200" alt="Sechs Rezeptvorschläge als Kacheln">
+  <img src="docs/rezept.png" width="200" alt="Rezept mit Zutaten und Zubereitung">
+</p>
+
+![Desktop-Ansicht des Vorrats](docs/desktop.png)
+
 ## Funktionen
 
 - **Vorrat:** Barcode-Scan mit der Handykamera (Erkennung läuft auf dem Gerät), Produktdaten von [Open Food Facts](https://world.openfoodfacts.org), Füllstand pro Packung, Anzahl Packungen, Ablaufdatum
