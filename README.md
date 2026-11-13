@@ -1,36 +1,36 @@
 # Vorrat
 
-Selbst gehostetes Lebensmittel-Inventar für den Haushalt: Barcode scannen, Füllstand und Ablaufdatum festhalten, rechtzeitig erinnert werden und sich von Claude Gerichte aus dem vorschlagen lassen, was da ist.
+Self-hosted pantry inventory for your household: scan a barcode, record how much is left and when it expires, get reminded in time, and let Claude suggest meals from what you already have.
 
-*Self-hosted pantry inventory with barcode scanning, expiry reminders, recipes, meal planning via Claude and shopping lists. The interface is German only.*
+"Vorrat" is German for pantry stock. **The app's interface is German only.**
 
 <p>
-  <img src="docs/vorrat.png" width="200" alt="Vorratsliste mit Füllstand und Ablaufdatum">
-  <img src="docs/eintrag.png" width="200" alt="Eintrag bearbeiten: Packungen, Füllstand, Haltbarkeit">
-  <img src="docs/kochen.png" width="200" alt="Sechs Rezeptvorschläge als Kacheln">
-  <img src="docs/rezept.png" width="200" alt="Rezept mit Zutaten und Zubereitung">
+  <img src="docs/vorrat.png" width="200" alt="Inventory list with fill level and expiry date">
+  <img src="docs/eintrag.png" width="200" alt="Editing an item: packages, fill level, best-before date">
+  <img src="docs/kochen.png" width="200" alt="Six recipe suggestions as tiles">
+  <img src="docs/rezept.png" width="200" alt="Recipe with ingredients and steps">
 </p>
 
-![Desktop-Ansicht des Vorrats](docs/desktop.png)
+![Desktop view of the inventory](docs/desktop.png)
 
-## Funktionen
+## Features
 
-- **Vorrat:** Barcode-Scan mit der Handykamera (Erkennung läuft auf dem Gerät), Produktdaten von [Open Food Facts](https://world.openfoodfacts.org), Füllstand pro Packung, Anzahl Packungen, Ablaufdatum
-- **Erinnerungen:** tägliche Benachrichtigung, wenn etwas bald abläuft (Web-Push oder lokal in der Android-App)
-- **Kochen mit Claude:** 6 Vorschläge aus dem Vorrat, wahlweise mit kurzen Rückfragen zum Antippen oder aus einem Foto der Zutaten; Wochenplan; nach dem Kochen die Zutaten vom Vorrat abziehen
-- **Rezepte und Einkaufsliste:** Vorschläge speichern, eigene Rezepte anlegen, Fehlendes auf die Einkaufsliste setzen
-- **Mehrere Personen:** Konten per Einladung, Zwei-Faktor-Anmeldung (TOTP), keine automatische Abmeldung, Änderungen erscheinen sofort auf allen Geräten
-- **Überall nutzbar:** installierbare Web-App (Android, iOS, Desktop) und eine schlanke Android-App mit nativem Scanner
+- **Inventory:** barcode scanning with the phone camera (decoded on the device), product data from [Open Food Facts](https://world.openfoodfacts.org), fill level per package, number of packages, expiry date
+- **Reminders:** a daily notification when something is about to expire (web push, or local notifications in the Android app)
+- **Cooking with Claude:** six suggestions based on your inventory, optionally after a few tap-to-answer questions or from a photo of ingredients; weekly meal plan; deduct the ingredients from the inventory after cooking
+- **Recipes and shopping list:** save suggestions, add your own recipes, put missing ingredients on the shopping list
+- **Multiple users:** invite-only accounts, two-factor login (TOTP), no automatic logout, changes show up on all devices immediately
+- **Runs everywhere:** installable web app (Android, iOS, desktop) and a small Android app with a native scanner
 
-## Aufbau
+## Structure
 
-| Ordner | Inhalt |
+| Folder | Contents |
 | --- | --- |
-| `server/` | Node 24, Fastify, SQLite (`node:sqlite`). TypeScript läuft direkt, ohne Build-Schritt. |
-| `web/` | React und Vite, wird als PWA vom Server ausgeliefert |
-| `android/` | Android-App (WebView mit nativem Barcode-Scanner und lokalen Erinnerungen) |
+| `server/` | Node 24, Fastify, SQLite (`node:sqlite`). TypeScript runs directly, without a build step. |
+| `web/` | React and Vite, served by the server as a PWA |
+| `android/` | Android app (WebView with a native barcode scanner and local reminders) |
 
-Alle Daten liegen in einer SQLite-Datei (`vorrat.db`) im Datenverzeichnis.
+All data lives in a single SQLite file (`vorrat.db`) in the data directory.
 
 ## Installation
 
@@ -42,86 +42,86 @@ mkdir data
 docker compose up -d
 ```
 
-Danach `http://SERVER-IP:8095/` öffnen. Das erste Konto, das angelegt wird, ist der Admin. Weitere Personen lädt der Admin unter „Mehr" per Link ein.
+Then open `http://SERVER-IP:8095/`. The first account you create becomes the admin. The admin invites further people by link under "Mehr" (More).
 
 ### Unraid
 
-`unraid-template.xml` nach `/boot/config/plugins/dockerMan/templates-user/my-Vorrat.xml` kopieren und den Container unter Docker → „Container hinzufügen" aus der Vorlage anlegen.
+Copy `unraid-template.xml` to `/boot/config/plugins/dockerMan/templates-user/my-Vorrat.xml` and create the container from that template under Docker → "Add Container".
 
-### Selbst bauen
+### Build it yourself
 
 ```bash
 docker build -t vorrat .
 docker run -d --name vorrat -p 8095:8080 -v "$PWD/data:/data" --user 1000:1000 vorrat
 ```
 
-`deploy.sh` baut das Image lokal und lädt es per SSH auf einen Docker-Host. Die Zugangsdaten stehen in `deploy.env` (Vorlage: `deploy.env.example`).
+`deploy.sh` builds the image locally and loads it onto a Docker host over SSH. The connection details go in `deploy.env` (template: `deploy.env.example`).
 
-### Einstellungen
+### Configuration
 
-| Variable | Standard | Bedeutung |
+| Variable | Default | Meaning |
 | --- | --- | --- |
-| `TZ` | `Europe/Berlin` | Zeitzone für Ablaufdaten und die Uhrzeit der Erinnerung |
-| `PORT` | `8080` | Port im Container |
-| `DATA_DIR` | `/data` | Datenbank und Arbeitsverzeichnis der Claude-CLI |
-| `TRUST_PROXY` | an | Wertet `X-Forwarded-*` eines Reverse-Proxys aus. Auf `false` setzen, wenn der Container ohne Proxy direkt am Internet hängt. |
-| `VAPID_SUBJECT` | `mailto:vorrat@example.com` | Kontaktangabe für Web-Push |
-| `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` | leer | Alternative zum Eintragen des Tokens in der App |
+| `TZ` | `Europe/Berlin` | Time zone for expiry dates and the reminder time |
+| `PORT` | `8080` | Port inside the container |
+| `DATA_DIR` | `/data` | Database and working directory of the Claude CLI |
+| `TRUST_PROXY` | on | Honours `X-Forwarded-*` from a reverse proxy. Set to `false` if the container faces the internet without a proxy. |
+| `VAPID_SUBJECT` | `mailto:vorrat@example.com` | Contact address for web push |
+| `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` | empty | Alternative to entering the token in the app |
 
-## Claude verbinden
+## Connecting Claude
 
-Der Server ruft die [Claude-Code-CLI](https://docs.claude.com/en/docs/claude-code) im Headless-Modus auf. Sie ist im Image enthalten und läuft ohne Tools: Claude bekommt den Vorrat als Text und liefert ein per JSON-Schema geprüftes Ergebnis.
+The server calls the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) in headless mode. It is included in the image and runs without tools: Claude receives the inventory as text and returns a result validated against a JSON schema.
 
-1. Auf einem Rechner mit Claude Code `claude setup-token` ausführen (nutzt das eigene Claude-Abo) oder einen API-Schlüssel anlegen.
-2. In der App als Admin unter „Mehr" → „Claude und Erinnerungen" eintragen.
+1. On a machine with Claude Code, run `claude setup-token` (uses your own Claude subscription), or create an API key.
+2. In the app, as admin, enter it under "Mehr" → "Claude und Erinnerungen".
 
-Das Token liegt danach in der Datenbank und wird nie wieder angezeigt. Alle Konten des Haushalts teilen sich dessen Kontingent. Ohne Token funktioniert alles außer den Vorschlägen.
+The token is then stored in the database and never displayed again. All accounts in the household share its quota. Without a token, everything except the suggestions works.
 
-## Android-App
+## Android app
 
-Die fertige APK gibt es unter [Releases](https://github.com/Noronus/vorrat/releases). Selbst bauen:
+The prebuilt APK is available under [Releases](https://github.com/Noronus/vorrat/releases). To build it yourself:
 
 ```bash
 cd android
 ./gradlew assembleRelease
 ```
 
-Voraussetzungen: JDK 21 (Pfad in `gradle.properties`) und das Android-SDK (`local.properties` mit `sdk.dir=…`). Zum Signieren eine `keystore.properties` mit `storeFile` und `password` anlegen; der Schlüssel heißt `vorrat`. Beim ersten Start fragt die App nach der Adresse des Servers.
+Requirements: JDK 21 (path in `gradle.properties`) and the Android SDK (`local.properties` with `sdk.dir=…`). For signing, create a `keystore.properties` with `storeFile` and `password`; the key alias is `vorrat`. On first launch the app asks for your server's address.
 
-Die App braucht keine Google-Dienste: Sie fragt den Server etwa stündlich nach ablaufenden Vorräten und zeigt die Erinnerung lokal an.
+The app does not need Google services: it asks the server about once an hour for expiring items and shows the reminder locally.
 
-## Sicherheit
+## Security
 
-Für den Betrieb im Internet gedacht, am besten trotzdem hinter einem Reverse-Proxy mit HTTPS:
+Built to be reachable from the internet, though a reverse proxy with HTTPS in front is still recommended:
 
-- Passwörter mit scrypt, Sitzungs-Cookie `HttpOnly` und `SameSite=Lax` (über HTTPS zusätzlich `Secure`)
-- TOTP mit Schutz gegen Wiederverwendung, Notfall-Codes, Sperre nach Fehlversuchen
-- Registrierung nur per Einladung
-- Herkunftsprüfung gegen CSRF, strikte Content-Security-Policy, Anfrage-Limits
-- Container läuft ohne Root und ohne Capabilities
+- Passwords hashed with scrypt; session cookie is `HttpOnly` and `SameSite=Lax` (plus `Secure` over HTTPS)
+- TOTP with replay protection, recovery codes, lockout after failed attempts
+- Registration by invitation only
+- Origin check against CSRF, strict Content Security Policy, rate limits
+- The container runs without root and without capabilities
 
-Steht ein Proxy mit eigener Anmeldung davor (z. B. NetBird mit PIN), erkennt die App dessen Anmeldeseite am fehlenden Antwort-Header `X-Vorrat` und lädt neu, statt Fehler zu zeigen.
+If a proxy with its own login sits in front (for example NetBird with a PIN), the app recognises the proxy's login page by the missing `X-Vorrat` response header and reloads instead of showing errors.
 
-Sicherheitslücken bitte nicht als öffentliches Issue melden, sondern über „Security" → „Report a vulnerability" im Repository.
+Please do not report vulnerabilities as public issues. Use "Security" → "Report a vulnerability" in the repository.
 
-## Entwicklung
+## Development
 
 ```bash
-cd web && npm ci && npm run build          # oder: npm run dev
+cd web && npm ci && npm run build          # or: npm run dev
 cd ../server && npm ci
 DATA_DIR=./data WEB_ROOT=../web/dist PORT=8080 node src/index.ts
 ```
 
-Für Claude-Funktionen muss lokal `claude` installiert und angemeldet sein.
+The Claude features need `claude` installed and logged in locally.
 
-## Datensicherung
+## Backup
 
-Den Container stoppen und das Datenverzeichnis kopieren, oder im laufenden Betrieb mit SQLite sichern:
+Stop the container and copy the data directory, or back up while it is running with SQLite:
 
 ```bash
 sqlite3 data/vorrat.db "VACUUM INTO 'backup.db'"
 ```
 
-## Lizenz
+## License
 
 [MIT](LICENSE)
