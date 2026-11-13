@@ -2,7 +2,7 @@
 
 Self-hosted pantry inventory for your household: scan a barcode, record how much is left and when it expires, get reminded in time, and let Claude suggest meals from what you already have.
 
-"Vorrat" is German for pantry stock. **The app's interface is German only.**
+"Vorrat" is German for pantry stock. **The app's interface is currently German only.** If you would like an English version, [open an issue](https://github.com/Noronus/vorrat/issues) and I will gladly add one.
 
 <p>
   <img src="docs/vorrat.png" width="200" alt="Inventory list with fill level and expiry date">
