@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Thumb } from './Inventory';
-import { amountText, api, attempt, fmtNum, matches, toast, useLoad, type Item, type ShoppingItem } from './lib';
+import { amountText, api, attempt, fmtNum, matches, promptDialog, toast, useLoad, type Item, type ShoppingItem } from './lib';
 
 export function Shopping() {
   const { data, reload } = useLoad<ShoppingItem[]>('/shopping');
@@ -23,13 +23,26 @@ export function Shopping() {
     else if (r && i.done && i.stocked_item_id) toast('Wieder aus dem Vorrat genommen');
     reload();
   }
+  /** Packungsgröße ändern, z. B. wenn es die Packung jetzt mit 750 statt 500 g gibt */
+  async function setPack(i: ShoppingItem) {
+    const v = await promptDialog(`Packungsgröße ${i.name}`, { text: 'Wie viel kommt beim Abhaken in den Vorrat?', value: fmtNum(i.package_amount || 0), inputMode: 'decimal', suffix: i.unit || '', ok: 'Übernehmen' });
+    if (v === null) return;
+    const n = Number(v.replace(',', '.'));
+    if (!(n > 0)) return toast('Bitte eine Zahl eingeben');
+    await attempt(() => api(`/shopping/${i.id}`, { method: 'PATCH', body: { pack_amount: n } }));
+    reload();
+  }
   const pack = (i: ShoppingItem) => (i.unit === '%' || !i.package_amount ? '1 Packung' : `${fmtNum(i.package_amount)} ${i.unit}`);
   const row = (i: ShoppingItem) => (
     <label key={i.id} className={'list-row check' + (i.done ? ' done' : '')}>
       <input type="checkbox" checked={!!i.done} onChange={() => toggle(i)} />
       <div className="grow">
         <span>{i.name}{i.amount && <span className="muted"> · {i.amount}</span>}</span>
-        {i.item_id && !i.done && <div className="muted">{pack(i)} · kommt beim Abhaken in den Vorrat</div>}
+        {i.item_id && !i.done && (
+          <div className="muted">
+            {i.unit === '%' ? pack(i) : <button type="button" className="pack-edit" onClick={(e) => { e.preventDefault(); setPack(i); }}>{pack(i)} ✎</button>} · kommt beim Abhaken in den Vorrat
+          </div>
+        )}
         {!!i.done && i.stocked_item_id && <div className="muted">{pack(i)} im Vorrat ergänzt</div>}
       </div>
       <button className="icon-btn" aria-label="Löschen" onClick={async (e) => { e.preventDefault(); await attempt(() => api(`/shopping/${i.id}`, { method: 'DELETE' })); reload(); }}>✕</button>

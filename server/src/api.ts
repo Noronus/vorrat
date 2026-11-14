@@ -222,20 +222,21 @@ export function registerApi(app: FastifyInstance) {
 
   // ---------- Einkaufsliste ----------
   app.get('/api/shopping', async () => all(
-    `SELECT s.*, i.unit, i.package_amount, i.category, i.brand FROM shopping_items s LEFT JOIN items i ON i.id=s.item_id ORDER BY s.done, s.id DESC`));
+    `SELECT s.*, i.unit, COALESCE(s.pack_amount, i.package_amount) AS package_amount, i.category, i.brand FROM shopping_items s LEFT JOIN items i ON i.id=s.item_id ORDER BY s.done, s.id DESC`));
 
   /** Abgehakt = gekauft: eine volle Packung kommt in den Vorrat. Liefert die Nummer des Vorrats-Eintrags. */
-  function stock(src: any): number {
+  function stock(src: any, amount = src.package_amount): number {
     const now = nowIso();
-    // Ohne Ablaufdatum zählt die neue Packung zum vorhandenen Eintrag, sonst wird es ein eigener (das Datum der neuen Packung ist ein anderes)
-    if (!src.consumed_at && !src.expires_on) {
+    // Ohne Ablaufdatum und bei gleicher Packungsgröße zählt die neue Packung zum vorhandenen Eintrag,
+    // sonst wird es ein eigener (anderes Datum oder andere Größe)
+    if (!src.consumed_at && !src.expires_on && amount === src.package_amount) {
       run('UPDATE items SET count=count+1, remaining_amount=remaining_amount+?, updated_at=? WHERE id=?', src.package_amount, now, src.id);
       return src.id;
     }
     const r = run(
       `INSERT INTO items(name,brand,barcode,image_url,unit,package_amount,count,remaining_amount,category,tags,created_at,updated_at)
        VALUES(?,?,?,?,?,?,1,?,?,?,?,?)`,
-      src.name, src.brand, src.barcode, src.image_url, src.unit, src.package_amount, src.package_amount, src.category, src.tags, now, now);
+      src.name, src.brand, src.barcode, src.image_url, src.unit, amount, amount, src.category, src.tags, now, now);
     return Number(r.lastInsertRowid);
   }
   /** Haken wieder entfernt: die Packung geht wieder aus dem Vorrat */
@@ -273,7 +274,8 @@ export function registerApi(app: FastifyInstance) {
       if (b.done) {
         const src = cur.item_id && get<any>('SELECT * FROM items WHERE id=?', cur.item_id);
         if (src) {
-          run('UPDATE shopping_items SET stocked_item_id=?, stocked_amount=? WHERE id=?', stock(src), src.package_amount, id);
+          const amount = cur.pack_amount ?? src.package_amount;
+          run('UPDATE shopping_items SET stocked_item_id=?, stocked_amount=? WHERE id=?', stock(src, amount), amount, id);
           stocked = true;
         }
       } else if (cur.stocked_item_id) {
@@ -282,6 +284,11 @@ export function registerApi(app: FastifyInstance) {
       }
       run('UPDATE shopping_items SET done=? WHERE id=?', b.done ? 1 : 0, id);
       broadcast('items');
+    }
+    // Packungsgröße für diesen Einkauf (z. B. 750 statt 500 g); null = wie im Vorrat
+    if ('pack_amount' in b) {
+      const n = Number(b.pack_amount);
+      run('UPDATE shopping_items SET pack_amount=? WHERE id=?', n > 0 && n < 1e6 ? Math.round(n * 100) / 100 : null, id);
     }
     if ('name' in b && str(b.name)) run('UPDATE shopping_items SET name=?, amount=? WHERE id=?', str(b.name), str(b.amount, 60), id);
     return { ok: true, stocked };

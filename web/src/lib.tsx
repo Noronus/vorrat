@@ -158,14 +158,14 @@ export async function attempt<T>(fn: () => Promise<T>, okMsg?: string): Promise<
 }
 
 // ---------- Rückfragen (statt confirm/prompt des Browsers) ----------
-type DialogReq = { title: string; text?: string; ok: string; cancel: string; danger?: boolean; input?: { type: string; placeholder?: string }; resolve: (v: any) => void };
+type DialogReq = { title: string; text?: string; ok: string; cancel: string; danger?: boolean; input?: { type: string; placeholder?: string; value?: string; inputMode?: string; suffix?: string }; resolve: (v: any) => void };
 const dialogEvent = (d: DialogReq) => window.dispatchEvent(new CustomEvent('vorrat:dialog', { detail: d }));
 /** Ja/Nein-Frage im App-Stil. Liefert true bei Bestätigung. */
 export const confirmDialog = (title: string, o: { text?: string; ok?: string; cancel?: string; danger?: boolean } = {}) =>
   new Promise<boolean>((resolve) => dialogEvent({ title, ok: 'OK', cancel: 'Abbrechen', ...o, resolve }));
 /** Eingabe im App-Stil. Liefert null bei Abbruch. */
-export const promptDialog = (title: string, o: { text?: string; ok?: string; type?: string; placeholder?: string } = {}) =>
-  new Promise<string | null>((resolve) => dialogEvent({ title, text: o.text, ok: o.ok || 'OK', cancel: 'Abbrechen', input: { type: o.type || 'text', placeholder: o.placeholder }, resolve }));
+export const promptDialog = (title: string, o: { text?: string; ok?: string; type?: string; placeholder?: string; value?: string; inputMode?: string; suffix?: string } = {}) =>
+  new Promise<string | null>((resolve) => dialogEvent({ title, text: o.text, ok: o.ok || 'OK', cancel: 'Abbrechen', input: { type: o.type || 'text', placeholder: o.placeholder, value: o.value, inputMode: o.inputMode, suffix: o.suffix }, resolve }));
 
 export function Dialogs() {
   const [queue, setQueue] = useState<DialogReq[]>([]);
@@ -184,7 +184,7 @@ export function Dialogs() {
   }, [d]);
   useEffect(() => {
     if (!d) return;
-    setValue('');
+    setValue(d.input?.value || '');
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(false); } };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -199,7 +199,12 @@ export function Dialogs() {
       <form className="dialog" role="alertdialog" aria-label={d.title} onSubmit={(e) => { e.preventDefault(); close(true); }}>
         <h2>{d.title}</h2>
         {d.text && <p>{d.text}</p>}
-        {d.input && <input type={d.input.type} placeholder={d.input.placeholder} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />}
+        {d.input && (
+          <div className="row">
+            <input type={d.input.type} inputMode={d.input.inputMode as any} placeholder={d.input.placeholder} value={value} onChange={(e) => setValue(e.target.value)} onFocus={(e) => e.target.select()} autoFocus />
+            {d.input.suffix && <span className="lbl">{d.input.suffix}</span>}
+          </div>
+        )}
         <div className="dialog-actions">
           <button type="button" className="btn" onClick={() => close(false)}>{d.cancel}</button>
           <button className={'btn ' + (d.danger ? 'danger-fill' : 'primary')} autoFocus={!d.input}>{d.ok}</button>

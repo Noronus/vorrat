@@ -373,3 +373,4 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 /* Seite dahinter nicht scrollen, solange der Scanner offen ist */
 html:has(.scanner), body:has(.scanner) { overflow: hidden; }
 .scan-native { position: absolute; left: 16px; right: 16px; top: calc(env(safe-area-inset-top) + 72px); bottom: 230px; border-radius: 24px; background: #111; display: grid; place-items: center; color: #aaa; text-align: center; padding: 20px; }
+.pack-edit { font: inherit; color: var(--accent); background: var(--accent-soft); border: 0; border-radius: 8px; padding: 2px 8px; cursor: pointer; font-weight: 600; }

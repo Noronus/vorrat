@@ -125,6 +125,7 @@ for (const sql of [
   'ALTER TABLE shopping_items ADD COLUMN stocked_amount REAL',
   'ALTER TABLE recipes ADD COLUMN step_ingredients TEXT',
   'ALTER TABLE recipes ADD COLUMN emoji TEXT',
+  'ALTER TABLE shopping_items ADD COLUMN pack_amount REAL',
 ]) { try { db.exec(sql); } catch { /* Spalte existiert schon */ } }
 
 type P = string | number | bigint | null | undefined | boolean;
