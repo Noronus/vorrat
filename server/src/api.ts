@@ -72,6 +72,20 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/items', async () =>
     all(`${itemSelect} WHERE i.consumed_at IS NULL ORDER BY i.expires_on IS NULL, i.expires_on, i.name COLLATE NOCASE`));
 
+  /** Aufgebrauchtes (je Produkt einmal, zuletzt Geleertes zuerst), solange davon nichts mehr im Vorrat ist */
+  app.get('/api/items/empty', async () => {
+    const seen = new Set<string>();
+    const key = (i: any) => `${i.name}|${i.brand || ''}`.toLowerCase();
+    for (const i of all<any>('SELECT name, brand FROM items WHERE consumed_at IS NULL')) seen.add(key(i));
+    return all<any>(`${itemSelect} WHERE i.consumed_at IS NOT NULL ORDER BY i.consumed_at DESC`).filter((i) => !seen.has(key(i)) && !!seen.add(key(i)));
+  });
+  /** Aufgebrauchtes Produkt ganz vergessen (alle leeren Einträge mit gleichem Namen und gleicher Marke) */
+  app.delete('/api/items/empty/:id', async (req) => {
+    const it = get<any>('SELECT name, brand FROM items WHERE id=? AND consumed_at IS NOT NULL', Number((req.params as any).id));
+    if (it) run('DELETE FROM items WHERE consumed_at IS NOT NULL AND name=? AND brand IS ?', it.name, it.brand);
+    return { ok: true };
+  });
+
   /** Alles, was je im Vorrat war (je Produkt einmal, Vorhandenes zuerst): Grundlage für die Suche der Einkaufsliste */
   app.get('/api/items/catalog', async () => {
     const seen = new Set<string>();

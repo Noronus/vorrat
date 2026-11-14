@@ -133,7 +133,7 @@ label.btn { display: grid; place-items: center; cursor: pointer; }
 .badge.bad { background: var(--bad-bg); color: var(--bad); }
 
 /* ---------- Vorrat: Kennzahlen als Filter ---------- */
-.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .stat { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px 11px; border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); border: 1.5px solid transparent; transition: transform .1s, border-color .15s; }
 .stat:active { transform: scale(.97); }
 .stat b { font: 600 1.9rem/1 var(--display); letter-spacing: -.02em; }
@@ -319,7 +319,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
   /* Vorrat: Kennzahlen und Suche in einer Zeile, Einträge als Kartenraster */
   .page-vorrat .toolbar { flex-direction: row; align-items: center; justify-content: space-between; gap: 18px; }
   .page-vorrat .toolbar input[type='search'] { max-width: 340px; }
-  .stats { grid-template-columns: repeat(3, 150px); }
+  .stats { grid-template-columns: repeat(4, 140px); }
   .chips.scroll { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
   .list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
   .list.grid > p { grid-column: 1 / -1; }
@@ -374,3 +374,4 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 html:has(.scanner), body:has(.scanner) { overflow: hidden; }
 .scan-native { position: absolute; left: 16px; right: 16px; top: calc(env(safe-area-inset-top) + 72px); bottom: 230px; border-radius: 24px; background: #111; display: grid; place-items: center; color: #aaa; text-align: center; padding: 20px; }
 .pack-edit { font: inherit; color: var(--accent); background: var(--accent-soft); border: 0; border-radius: 8px; padding: 2px 8px; cursor: pointer; font-weight: 600; }
+.used-up .thumb { filter: grayscale(1); opacity: .6; }
