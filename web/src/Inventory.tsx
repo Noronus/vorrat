@@ -1,35 +1,41 @@
 import { useMemo, useState } from 'react';
 import { iconFor } from './icons';
 import { ItemEditor } from './ItemEditor';
-import { amountText, daysUntil, expiry, Sheet, type Item } from './lib';
+import { amountText, daysUntil, expiry, matches, Sheet, type Item } from './lib';
 
 /** Symbol passend zum Lebensmittel, sonst der Anfangsbuchstabe */
 export function Thumb({ name, category, big }: { name: string; category?: string | null; big?: boolean }) {
   const icon = iconFor(name, category);
-  return <div className={'thumb' + (icon ? ' emoji' : '') + (big ? ' big' : '')} aria-hidden>{icon || name.trim().slice(0, 1).toUpperCase() || '?'}</div>;
+  // Jedes Lebensmittel bekommt einen festen Farbton, damit die Liste nicht einfarbig wirkt
+  let sum = 0;
+  for (const c of name) sum = (sum * 31 + c.charCodeAt(0)) % 997;
+  const hue = [28, 48, 95, 150, 200, 265, 340][sum % 7];
+  return <div className={'thumb' + (icon ? ' emoji' : '') + (big ? ' big' : '')} style={{ '--h': hue } as React.CSSProperties} aria-hidden>{icon || name.trim().slice(0, 1).toUpperCase() || '?'}</div>;
 }
 
 export function Inventory({ items, reload, onScan }: { items: Item[] | null; reload: () => void; onScan: () => void }) {
   const [q, setQ] = useState('');
-  const [loc, setLoc] = useState<'soon' | null>(null);
+  const [loc, setLoc] = useState<'soon' | 'low' | null>(null);
   const [edit, setEdit] = useState<Item | null>(null);
 
   const soonCount = useMemo(() => (items || []).filter((i) => i.expires_on && daysUntil(i.expires_on) <= 5).length, [items]);
+  const isLow = (i: Item) => i.remaining_amount / (i.package_amount * i.count) <= 0.25;
+  const lowCount = useMemo(() => (items || []).filter(isLow).length, [items]);
   const shown = useMemo(() => {
-    const needle = q.trim().toLowerCase();
     return (items || []).filter((i) =>
-      (loc === null || (i.expires_on && daysUntil(i.expires_on) <= 5)) &&
-      (!needle || i.name.toLowerCase().includes(needle) || (i.brand || '').toLowerCase().includes(needle)));
+      (loc === null || (loc === 'low' ? isLow(i) : i.expires_on && daysUntil(i.expires_on) <= 5)) &&
+      matches(i, q));
   }, [items, q, loc]);
 
   return (
     <>
       <div className="toolbar">
-        <input type="search" placeholder="Im Vorrat suchen" value={q} onChange={(e) => setQ(e.target.value)} />
-        <div className="chips scroll">
-          <button className={'chip' + (loc === null ? ' on' : '')} onClick={() => setLoc(null)}>Alles</button>
-          {soonCount > 0 && <button className={'chip warn' + (loc === 'soon' ? ' on' : '')} onClick={() => setLoc('soon')}>Läuft ab · {soonCount}</button>}
+        <div className="stats">
+          <button className={'stat' + (loc === null ? ' on' : '')} aria-pressed={loc === null} onClick={() => setLoc(null)}><b>{items?.length ?? '–'}</b><span>im Vorrat</span></button>
+          <button className={'stat soon' + (loc === 'soon' ? ' on' : '') + (soonCount ? '' : ' zero')} aria-pressed={loc === 'soon'} onClick={() => setLoc(loc === 'soon' ? null : 'soon')}><b>{soonCount}</b><span>läuft bald ab</span></button>
+          <button className={'stat low' + (loc === 'low' ? ' on' : '') + (lowCount ? '' : ' zero')} aria-pressed={loc === 'low'} onClick={() => setLoc(loc === 'low' ? null : 'low')}><b>{lowCount}</b><span>fast leer</span></button>
         </div>
+        <input type="search" placeholder="Im Vorrat suchen" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
       {items && !items.length ? (

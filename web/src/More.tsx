@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, attempt, Chips, native, Sheet, toast, useLoad, type User } from './lib';
+import { api, attempt, Chips, confirmDialog, native, promptDialog, Sheet, toast, useLoad, type User } from './lib';
 
 const b64ToBytes = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
@@ -27,7 +27,7 @@ function ClaudeToken({ onSaved }: { onSaved: () => void }) {
   const [token, setToken] = useState('');
   return (
     <form className="form" onSubmit={async (e) => { e.preventDefault(); if (await attempt(() => api('/admin/settings', { method: 'PUT', body: { claudeToken: token } }), token ? 'Token gespeichert' : 'Token entfernt')) { setToken(''); onSaved(); } }}>
-      <label>Claude-Token (aus <code>claude setup-token</code>; wird nie wieder angezeigt)
+      <label><span className="lbl">Claude-Token aus <code>claude setup-token</code>. Wird nie wieder angezeigt.</span>
         <input type="password" autoComplete="off" placeholder="sk-ant-oat01-…" value={token} onChange={(e) => setToken(e.target.value)} />
       </label>
       <button className="btn">{token ? 'Token speichern' : 'Token entfernen'}</button>
@@ -104,7 +104,7 @@ function TwoFactor({ user, refresh }: { user: User; refresh: () => void }) {
     if (res) { setRecovery(res.recoveryCodes); setSetup(null); setCode(''); refresh(); }
   }
   async function disable() {
-    const password = prompt('Zum Abschalten dein Passwort eingeben:');
+    const password = await promptDialog('2FA ausschalten', { text: 'Zum Abschalten dein Passwort eingeben.', type: 'password', ok: 'Ausschalten' });
     if (!password) return;
     if (await attempt(() => api('/auth/totp/disable', { body: { password } }), '2FA ist aus')) refresh();
   }
@@ -183,8 +183,8 @@ function Admin({ me }: { me: User }) {
           {users.data?.map((u) => (
             <div key={u.id} className="list-row">
               <div className="grow"><strong>{u.username}</strong><div className="muted">{u.isAdmin ? 'Admin · ' : ''}2FA {u.totpEnabled ? 'an' : 'aus'}</div></div>
-              {u.totpEnabled && u.id !== me.id && <button className="btn small" onClick={async () => { if (confirm(`2FA von ${u.username} zurücksetzen?`)) { await attempt(() => api(`/admin/users/${u.id}/reset-2fa`, { body: {} })); users.reload(); } }}>2FA zurücksetzen</button>}
-              {u.id !== me.id && <button className="btn small danger" onClick={async () => { if (confirm(`${u.username} wirklich löschen?`)) { await attempt(() => api(`/admin/users/${u.id}`, { method: 'DELETE' })); users.reload(); } }}>Löschen</button>}
+              {u.totpEnabled && u.id !== me.id && <button className="btn small" onClick={async () => { if (await confirmDialog(`2FA von ${u.username} zurücksetzen?`, { ok: 'Zurücksetzen', danger: true })) { await attempt(() => api(`/admin/users/${u.id}/reset-2fa`, { body: {} })); users.reload(); } }}>2FA zurücksetzen</button>}
+              {u.id !== me.id && <button className="btn small danger" onClick={async () => { if (await confirmDialog(`${u.username} löschen?`, { text: 'Das Konto wird endgültig gelöscht.', ok: 'Löschen', danger: true })) { await attempt(() => api(`/admin/users/${u.id}`, { method: 'DELETE' })); users.reload(); } }}>Löschen</button>}
             </div>
           ))}
           {invites.data?.map((i) => (

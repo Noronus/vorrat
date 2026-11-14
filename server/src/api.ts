@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { all, get, getSetting, nowIso, run, setSetting } from './db.ts';
+import { scheduleTagging } from './ai.ts';
+import { broadcast } from './live.ts';
 import { reminderPayload } from './push.ts';
 
 const UNITS = ['g', 'ml', 'Stk', '%'];
@@ -70,6 +72,15 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/items', async () =>
     all(`${itemSelect} WHERE i.consumed_at IS NULL ORDER BY i.expires_on IS NULL, i.expires_on, i.name COLLATE NOCASE`));
 
+  /** Alles, was je im Vorrat war (je Produkt einmal, Vorhandenes zuerst): Grundlage für die Suche der Einkaufsliste */
+  app.get('/api/items/catalog', async () => {
+    const seen = new Set<string>();
+    return all<any>(`${itemSelect} ORDER BY i.consumed_at IS NOT NULL, i.id DESC`).filter((i) => {
+      const key = `${i.name}|${i.brand || ''}`.toLowerCase();
+      return !seen.has(key) && !!seen.add(key);
+    });
+  });
+
   app.post('/api/items', async (req, reply) => {
     const b = req.body as any;
     const name = str(b.name);
@@ -100,6 +111,7 @@ export function registerApi(app: FastifyInstance) {
        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
       name, str(b.brand), barcode, httpsUrl(b.image_url), unit, pkg, count, remaining, expires, str(b.note, 500), now, now);
     run('UPDATE items SET category=? WHERE id=?', str(b.category, 400), r.lastInsertRowid);
+    scheduleTagging();
     return { id: Number(r.lastInsertRowid) };
   });
 
@@ -141,6 +153,7 @@ export function registerApi(app: FastifyInstance) {
     const consumed = n.remaining_amount <= 0 ? nowIso() : null;
     run(`UPDATE items SET name=?,brand=?,note=?,expires_on=?,unit=?,package_amount=?,count=?,remaining_amount=?,consumed_at=?,updated_at=? WHERE id=?`,
       n.name, n.brand, n.note, n.expires_on, n.unit, n.package_amount, n.count, n.remaining_amount, consumed, nowIso(), id);
+    if (n.name !== cur.name) { run('UPDATE items SET tags=NULL WHERE id=?', id); scheduleTagging(); }
     return { ok: true, consumed: !!consumed };
   });
 
@@ -150,7 +163,7 @@ export function registerApi(app: FastifyInstance) {
   });
 
   // ---------- Rezepte ----------
-  const recipeOut = (r: any) => r && { ...r, ingredients: JSON.parse(r.ingredients), steps: JSON.parse(r.steps) };
+  const recipeOut = (r: any) => r && { ...r, ingredients: JSON.parse(r.ingredients), steps: JSON.parse(r.steps), step_ingredients: r.step_ingredients ? JSON.parse(r.step_ingredients) : null };
   const recipeIn = (b: any) => ({
     title: str(b.title),
     description: str(b.description, 2000),
@@ -159,6 +172,11 @@ export function registerApi(app: FastifyInstance) {
     ingredients: JSON.stringify((Array.isArray(b.ingredients) ? b.ingredients : []).slice(0, 80)
       .map((i: any) => ({ name: str(i?.name) || '', amount: str(i?.amount, 60) || '' })).filter((i: any) => i.name)),
     steps: JSON.stringify((Array.isArray(b.steps) ? b.steps : []).slice(0, 60).map((s: any) => str(s, 2000)).filter(Boolean)),
+    // Zutaten je Schritt (Index in ingredients); nur gültig, wenn es zu den Schritten passt
+    step_ingredients: Array.isArray(b.step_ingredients) && Array.isArray(b.steps) && b.step_ingredients.length === b.steps.length
+      ? JSON.stringify(b.step_ingredients.slice(0, 60).map((l: any) => (Array.isArray(l) ? l : []).map(Number).filter((n: number) => Number.isInteger(n) && n >= 0 && n < 80).slice(0, 30)))
+      : null,
+    emoji: str(b.emoji, 8),
   });
   app.get('/api/recipes', async () => all('SELECT * FROM recipes ORDER BY title COLLATE NOCASE').map(recipeOut));
   app.post('/api/recipes', async (req, reply) => {
@@ -166,15 +184,15 @@ export function registerApi(app: FastifyInstance) {
     if (!r.title) return reply.code(400).send({ error: 'Titel fehlt' });
     const existing = get<any>('SELECT id FROM recipes WHERE title=? COLLATE NOCASE', r.title);
     if (existing && (req.body as any).dedupe) return { id: existing.id, existed: true };
-    const res = run('INSERT INTO recipes(title,description,servings,time_minutes,ingredients,steps,source,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
-      r.title, r.description, r.servings, r.time_minutes, r.ingredients, r.steps, (req.body as any).source === 'ai' ? 'ai' : 'manual', uid(req), nowIso());
+    const res = run('INSERT INTO recipes(title,description,servings,time_minutes,ingredients,steps,step_ingredients,emoji,source,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+      r.title, r.description, r.servings, r.time_minutes, r.ingredients, r.steps, r.step_ingredients, r.emoji, (req.body as any).source === 'ai' ? 'ai' : 'manual', uid(req), nowIso());
     return { id: Number(res.lastInsertRowid) };
   });
   app.put('/api/recipes/:id', async (req, reply) => {
     const r = recipeIn(req.body);
     if (!r.title) return reply.code(400).send({ error: 'Titel fehlt' });
-    run('UPDATE recipes SET title=?,description=?,servings=?,time_minutes=?,ingredients=?,steps=? WHERE id=?',
-      r.title, r.description, r.servings, r.time_minutes, r.ingredients, r.steps, Number((req.params as any).id));
+    run('UPDATE recipes SET title=?,description=?,servings=?,time_minutes=?,ingredients=?,steps=?,step_ingredients=?,emoji=COALESCE(?,emoji) WHERE id=?',
+      r.title, r.description, r.servings, r.time_minutes, r.ingredients, r.steps, r.step_ingredients, r.emoji, Number((req.params as any).id));
     return { ok: true };
   });
   app.delete('/api/recipes/:id', async (req) => {
@@ -203,7 +221,32 @@ export function registerApi(app: FastifyInstance) {
   });
 
   // ---------- Einkaufsliste ----------
-  app.get('/api/shopping', async () => all('SELECT * FROM shopping_items ORDER BY done, id DESC'));
+  app.get('/api/shopping', async () => all(
+    `SELECT s.*, i.unit, i.package_amount, i.category, i.brand FROM shopping_items s LEFT JOIN items i ON i.id=s.item_id ORDER BY s.done, s.id DESC`));
+
+  /** Abgehakt = gekauft: eine volle Packung kommt in den Vorrat. Liefert die Nummer des Vorrats-Eintrags. */
+  function stock(src: any): number {
+    const now = nowIso();
+    // Ohne Ablaufdatum zählt die neue Packung zum vorhandenen Eintrag, sonst wird es ein eigener (das Datum der neuen Packung ist ein anderes)
+    if (!src.consumed_at && !src.expires_on) {
+      run('UPDATE items SET count=count+1, remaining_amount=remaining_amount+?, updated_at=? WHERE id=?', src.package_amount, now, src.id);
+      return src.id;
+    }
+    const r = run(
+      `INSERT INTO items(name,brand,barcode,image_url,unit,package_amount,count,remaining_amount,category,tags,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,1,?,?,?,?,?)`,
+      src.name, src.brand, src.barcode, src.image_url, src.unit, src.package_amount, src.package_amount, src.category, src.tags, now, now);
+    return Number(r.lastInsertRowid);
+  }
+  /** Haken wieder entfernt: die Packung geht wieder aus dem Vorrat */
+  function unstock(s: any) {
+    const it = get<any>('SELECT * FROM items WHERE id=? AND consumed_at IS NULL', s.stocked_item_id);
+    if (!it) return;
+    const remaining = Math.max(Math.round((it.remaining_amount - s.stocked_amount) * 100) / 100, 0);
+    if (remaining > 0) run('UPDATE items SET remaining_amount=?, count=?, updated_at=? WHERE id=?', remaining, Math.max(1, it.count - 1), nowIso(), it.id);
+    else if (it.id !== s.item_id) run('DELETE FROM items WHERE id=?', it.id);
+    else run('UPDATE items SET remaining_amount=0, consumed_at=?, updated_at=? WHERE id=?', nowIso(), nowIso(), it.id);
+  }
   app.post('/api/shopping', async (req, reply) => {
     const b = req.body as any;
     const list: any[] = Array.isArray(b.items) ? b.items : [b];
@@ -212,7 +255,10 @@ export function registerApi(app: FastifyInstance) {
       const name = str(it?.name);
       if (!name) continue;
       if (get('SELECT 1 FROM shopping_items WHERE done=0 AND name=? COLLATE NOCASE', name)) continue;
-      run('INSERT INTO shopping_items(name,amount,added_by,created_at) VALUES(?,?,?,?)', name, str(it.amount, 60), uid(req), nowIso());
+      // Verknüpfung zum Vorrat: ausdrücklich gewählt oder über den gleichen Namen (auch Aufgebrauchtes)
+      const linked = get<any>('SELECT id FROM items WHERE id=?', Number(it.item_id))
+        || get<any>('SELECT id FROM items WHERE name=? COLLATE NOCASE ORDER BY consumed_at IS NOT NULL, id DESC LIMIT 1', name);
+      run('INSERT INTO shopping_items(name,amount,added_by,created_at,item_id) VALUES(?,?,?,?,?)', name, str(it.amount, 60), uid(req), nowIso(), linked?.id ?? null);
       added++;
     }
     if (!added && list.length === 1 && !str(list[0]?.name)) return reply.code(400).send({ error: 'Name fehlt' });
@@ -221,9 +267,24 @@ export function registerApi(app: FastifyInstance) {
   app.patch('/api/shopping/:id', async (req) => {
     const b = req.body as any;
     const id = Number((req.params as any).id);
-    if ('done' in b) run('UPDATE shopping_items SET done=? WHERE id=?', !!b.done, id);
+    const cur = get<any>('SELECT * FROM shopping_items WHERE id=?', id);
+    let stocked = false;
+    if (cur && 'done' in b && !!b.done !== !!cur.done) {
+      if (b.done) {
+        const src = cur.item_id && get<any>('SELECT * FROM items WHERE id=?', cur.item_id);
+        if (src) {
+          run('UPDATE shopping_items SET stocked_item_id=?, stocked_amount=? WHERE id=?', stock(src), src.package_amount, id);
+          stocked = true;
+        }
+      } else if (cur.stocked_item_id) {
+        unstock(cur);
+        run('UPDATE shopping_items SET stocked_item_id=NULL, stocked_amount=NULL WHERE id=?', id);
+      }
+      run('UPDATE shopping_items SET done=? WHERE id=?', b.done ? 1 : 0, id);
+      broadcast('items');
+    }
     if ('name' in b && str(b.name)) run('UPDATE shopping_items SET name=?, amount=? WHERE id=?', str(b.name), str(b.amount, 60), id);
-    return { ok: true };
+    return { ok: true, stocked };
   });
   app.delete('/api/shopping/:id', async (req) => {
     run('DELETE FROM shopping_items WHERE id=?', Number((req.params as any).id));

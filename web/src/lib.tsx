@@ -4,16 +4,27 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 export type Item = {
   id: number; name: string; brand: string | null; barcode: string | null; image_url: string | null;
   unit: string; package_amount: number; count: number;
-  remaining_amount: number; expires_on: string | null; note: string | null; category?: string | null;
+  remaining_amount: number; expires_on: string | null; note: string | null; category?: string | null; tags?: string | null; consumed_at?: string | null;
 };
 export type Ingredient = { name: string; amount: string; in_stock?: boolean };
 export type Recipe = {
   emoji?: string;
   id?: number; title: string; description?: string | null; servings?: number | null; time_minutes?: number | null;
   ingredients: Ingredient[]; steps: string[]; uses_expiring?: string[]; source?: string;
+  /** Je Schritt die Indizes der Zutaten, die darin gebraucht werden */
+  step_ingredients?: number[][] | null;
 };
 export type PlanEntry = { id: number; date: string; slot: string; recipe_id: number | null; title: string };
-export type ShoppingItem = { id: number; name: string; amount: string | null; done: number };
+export type ShoppingItem = { id: number; name: string; amount: string | null; done: number; item_id: number | null; stocked_item_id: number | null; unit: string | null; package_amount: number | null; category: string | null; brand: string | null };
+
+/** Klein und ohne Umlaut-Unterschiede: "muesli" und "Müsli" treffen dasselbe */
+export const fold = (s: string) => s.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+/** Jedes Suchwort muss vorkommen: im Namen, in der Marke, der Warengruppe, der Notiz oder den Suchbegriffen von Claude */
+export function matches(i: Pick<Item, 'name' | 'brand' | 'category' | 'tags' | 'note'>, query: string) {
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  const hay = fold(`${i.name} ${i.brand || ''} ${i.category || ''} ${i.tags || ''} ${i.note || ''}`);
+  return words.every((w) => hay.includes(w));
+}
 export type User = { id: number; username: string; isAdmin: boolean; totpEnabled: boolean };
 export type AiJob = { id: number; kind: string; status: 'running' | 'done' | 'error'; error: string | null; createdAt: string; params: any; result: any };
 
@@ -31,7 +42,8 @@ function proxyLoginNeeded() {
 
 /** Brücke zur Android-App (nur dort vorhanden) */
 export const native: undefined | {
-  scan(): void; notificationsEnabled(): boolean; setNotifications(on: boolean): void; testNotification(): void; changeServer(): void;
+  scan(): void; scanStart?(x: number, y: number, w: number, h: number): void; scanStop?(): void; torch?(on: boolean): boolean;
+  notificationsEnabled(): boolean; setNotifications(on: boolean): void; testNotification(): void; changeServer(): void;
 } = (window as any).VorratNative;
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const hasBody = opts.body !== undefined;
@@ -145,8 +157,108 @@ export async function attempt<T>(fn: () => Promise<T>, okMsg?: string): Promise<
   try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e: any) { toast(e.message || 'Fehler'); return undefined; }
 }
 
+// ---------- Rückfragen (statt confirm/prompt des Browsers) ----------
+type DialogReq = { title: string; text?: string; ok: string; cancel: string; danger?: boolean; input?: { type: string; placeholder?: string }; resolve: (v: any) => void };
+const dialogEvent = (d: DialogReq) => window.dispatchEvent(new CustomEvent('vorrat:dialog', { detail: d }));
+/** Ja/Nein-Frage im App-Stil. Liefert true bei Bestätigung. */
+export const confirmDialog = (title: string, o: { text?: string; ok?: string; cancel?: string; danger?: boolean } = {}) =>
+  new Promise<boolean>((resolve) => dialogEvent({ title, ok: 'OK', cancel: 'Abbrechen', ...o, resolve }));
+/** Eingabe im App-Stil. Liefert null bei Abbruch. */
+export const promptDialog = (title: string, o: { text?: string; ok?: string; type?: string; placeholder?: string } = {}) =>
+  new Promise<string | null>((resolve) => dialogEvent({ title, text: o.text, ok: o.ok || 'OK', cancel: 'Abbrechen', input: { type: o.type || 'text', placeholder: o.placeholder }, resolve }));
+
+export function Dialogs() {
+  const [queue, setQueue] = useState<DialogReq[]>([]);
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    const on = (e: Event) => setQueue((q) => [...q, (e as CustomEvent).detail]);
+    window.addEventListener('vorrat:dialog', on);
+    return () => window.removeEventListener('vorrat:dialog', on);
+  }, []);
+  const d = queue[0];
+  useEffect(() => {
+    if (!d) return;
+    const h = () => close(false);
+    backStack.push(h);
+    return () => { const i = backStack.lastIndexOf(h); if (i >= 0) backStack.splice(i, 1); };
+  }, [d]);
+  useEffect(() => {
+    if (!d) return;
+    setValue('');
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(false); } };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [d]);
+  if (!d) return null;
+  function close(ok: boolean) {
+    d.resolve(d.input ? (ok ? value : null) : ok);
+    setQueue((q) => q.slice(1));
+  }
+  return (
+    <div className="dialog-back" onClick={(e) => e.target === e.currentTarget && close(false)}>
+      <form className="dialog" role="alertdialog" aria-label={d.title} onSubmit={(e) => { e.preventDefault(); close(true); }}>
+        <h2>{d.title}</h2>
+        {d.text && <p>{d.text}</p>}
+        {d.input && <input type={d.input.type} placeholder={d.input.placeholder} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />}
+        <div className="dialog-actions">
+          <button type="button" className="btn" onClick={() => close(false)}>{d.cancel}</button>
+          <button className={'btn ' + (d.danger ? 'danger-fill' : 'primary')} autoFocus={!d.input}>{d.ok}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ---------- Rezeptmengen umrechnen ----------
+const FRAC: Record<string, number> = { '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3 };
+const NUM = String.raw`(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:[.,]\d+)?(?:\s*[½¼¾⅓⅔])?|[½¼¾⅓⅔])`;
+const parseNum = (t: string) => {
+  t = t.trim();
+  let m = t.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+  if (m) return +m[1] + +m[2] / +m[3];
+  m = t.match(/^(\d+)\/(\d+)$/);
+  if (m) return +m[1] / +m[2];
+  m = t.match(/^(\d+(?:[.,]\d+)?)?\s*([½¼¾⅓⅔])?$/);
+  return m ? (m[1] ? Number(m[1].replace(',', '.')) : 0) + (m[2] ? FRAC[m[2]] : 0) : NaN;
+};
+const fmtAmount = (n: number) => {
+  const r = n >= 100 ? Math.round(n / 5) * 5 : n >= 10 ? Math.round(n) : n >= 1 ? Math.round(n * 2) / 2 : Math.round(n * 4) / 4;
+  const whole = Math.floor(r), rest = r - whole;
+  const frac = rest === 0.5 ? '½' : rest === 0.25 ? '¼' : rest === 0.75 ? '¾' : '';
+  if (frac) return whole ? `${whole}${frac}` : frac;
+  return String(Math.round(r * 10) / 10).replace('.', ',');
+};
+/** "400 g" mal 1,5 = "600 g"; "1-2 Zehen" mal 2 = "2-4 Zehen"; Text ohne Zahl bleibt, wie er ist */
+export function scaleAmount(amount: string, factor: number) {
+  if (factor === 1 || !amount) return amount;
+  const m = amount.match(new RegExp(`^(ca\\.\\s*)?(${NUM})(?:\\s*[-–]\\s*(${NUM}))?(.*)$`));
+  if (!m) return amount;
+  const a = parseNum(m[2]), b = m[3] ? parseNum(m[3]) : NaN;
+  if (!(a > 0)) return amount;
+  return `${m[1] || ''}${fmtAmount(a * factor)}${b > 0 ? `–${fmtAmount(b * factor)}` : ''}${m[4]}`;
+}
+export function scaleRecipe(r: Recipe, servings: number): Recipe {
+  const base = r.servings || servings;
+  if (base === servings) return r;
+  return { ...r, servings, ingredients: r.ingredients.map((i) => ({ ...i, amount: scaleAmount(i.amount, servings / base) })) };
+}
+
 // ---------- Bausteine ----------
+/** Zurück-Taste (Android-App): schließt zuerst das oberste offene Fenster */
+const backStack: (() => void)[] = [];
+(window as any).vorratBack = () => { const top = backStack[backStack.length - 1]; if (!top) return false; top(); return true; };
+export function useBack(fn: () => void) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    const h = () => ref.current();
+    backStack.push(h);
+    return () => { const i = backStack.lastIndexOf(h); if (i >= 0) backStack.splice(i, 1); };
+  }, []);
+}
+
 export function Sheet({ title, onClose, children, full }: { title: string; onClose: () => void; children: ReactNode; full?: boolean }) {
+  useBack(onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);

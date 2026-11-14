@@ -119,6 +119,12 @@ for (const sql of [
   'ALTER TABLE items ADD COLUMN category TEXT',
   'ALTER TABLE products ADD COLUMN category TEXT',
   'ALTER TABLE users ADD COLUMN prefs TEXT',
+  'ALTER TABLE items ADD COLUMN tags TEXT',
+  'ALTER TABLE shopping_items ADD COLUMN item_id INTEGER',
+  'ALTER TABLE shopping_items ADD COLUMN stocked_item_id INTEGER',
+  'ALTER TABLE shopping_items ADD COLUMN stocked_amount REAL',
+  'ALTER TABLE recipes ADD COLUMN step_ingredients TEXT',
+  'ALTER TABLE recipes ADD COLUMN emoji TEXT',
 ]) { try { db.exec(sql); } catch { /* Spalte existiert schon */ } }
 
 type P = string | number | bigint | null | undefined | boolean;

@@ -35,6 +35,10 @@ export function Scanner({ onClose, onChanged }: { onClose: () => void; onChanged
   const [form, setForm] = useState<Partial<Item> | null>(null);
   const [loading, setLoading] = useState(false);
   const handle = useRef<(code: string) => void>(() => {});
+  /** Neuere Android-App: Kamera liegt direkt in der Seite statt in einem eigenen Bildschirm */
+  const embedded = !!native?.scanStart;
+  const box = useRef<HTMLDivElement>(null);
+  const sheetOpen = !!(lookup || form);
 
   handle.current = async (code: string) => {
     if (paused.current) return;
@@ -65,14 +69,29 @@ export function Scanner({ onClose, onChanged }: { onClose: () => void; onChanged
   /** Nach dem Speichern gleich weiter scannen (in der Android-App öffnet das den nativen Scanner) */
   function next() {
     resume();
-    native?.scan();
+    if (native && !embedded) native.scan();
   }
+
+  // Eingebettete Kamera: über die freie Fläche legen; ausblenden, solange ein Formular offen ist
+  useEffect(() => {
+    if (!embedded || sheetOpen) return;
+    const place = () => {
+      const r = box.current?.getBoundingClientRect();
+      if (r && r.width > 0) native!.scanStart!(r.left, r.top, r.width, r.height);
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    if (box.current) ro.observe(box.current);
+    window.addEventListener('resize', place);
+    return () => { ro.disconnect(); window.removeEventListener('resize', place); native!.scanStop!(); };
+  }, [embedded, sheetOpen]);
 
   useEffect(() => {
     if (native) {
       const on = (e: Event) => { const code = (e as CustomEvent).detail; if (code) handle.current(String(code)); };
       window.addEventListener('vorrat:native-scan', on);
-      native.scan();
+      if (embedded) setTorch(false);
+      else native.scan();
       return () => window.removeEventListener('vorrat:native-scan', on);
     }
     let stopped = false;
@@ -111,6 +130,7 @@ export function Scanner({ onClose, onChanged }: { onClose: () => void; onChanged
   }, []);
 
   async function toggleTorch() {
+    if (embedded) { if (native!.torch?.(!torch)) setTorch(!torch); return; }
     try {
       await track.current?.applyConstraints({ advanced: [{ torch: !torch } as any] });
       setTorch(!torch);
@@ -121,14 +141,15 @@ export function Scanner({ onClose, onChanged }: { onClose: () => void; onChanged
     <div className="scanner">
       {!native && <video ref={video} playsInline muted />}
       {!native && !error && <div className="scan-frame"><div className="scan-line" /></div>}
+      {embedded && <div className="scan-native" ref={box}>Kamera startet …</div>}
       <div className="scan-top">
         <button className="icon-btn dark" onClick={onClose} aria-label="Schließen">✕</button>
-        <span>{loading ? 'Suche Produkt …' : native ? 'Hinzufügen' : 'Barcode ins Feld halten'}</span>
+        <span>{loading ? 'Suche Produkt …' : native && !embedded ? 'Hinzufügen' : 'Barcode ins Feld halten'}</span>
         {torch !== null ? <button className="icon-btn dark" onClick={toggleTorch} aria-label="Licht">{torch ? '🔦' : '💡'}</button> : <span style={{ width: 40 }} />}
       </div>
       <div className="scan-bottom">
         {error && <p className="scan-error">{error}</p>}
-        {native && <button className="btn primary big" onClick={() => native!.scan()}>Barcode scannen</button>}
+        {native && !embedded && <button className="btn primary big" onClick={() => native!.scan()}>Barcode scannen</button>}
         <form className="row" onSubmit={(e) => { e.preventDefault(); if (manual.trim().length >= 6) { handle.current(manual.trim()); setManual(''); } }}>
           <input inputMode="numeric" placeholder="Barcode eintippen" value={manual} onChange={(e) => setManual(e.target.value)} />
           <button className="btn">OK</button>

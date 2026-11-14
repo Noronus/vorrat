@@ -1,32 +1,61 @@
-import { useState } from 'react';
-import { api, attempt, useLoad, type ShoppingItem } from './lib';
+import { useMemo, useState } from 'react';
+import { Thumb } from './Inventory';
+import { amountText, api, attempt, fmtNum, matches, toast, useLoad, type Item, type ShoppingItem } from './lib';
 
 export function Shopping() {
   const { data, reload } = useLoad<ShoppingItem[]>('/shopping');
+  // Alles, was je im Vorrat war: Daraus kommen die Vorschläge beim Tippen
+  const catalog = useLoad<Item[]>('/items/catalog');
   const [text, setText] = useState('');
   const open = (data || []).filter((i) => !i.done);
   const done = (data || []).filter((i) => i.done);
+  const hits = useMemo(() => (text.trim() ? (catalog.data || []).filter((i) => matches(i, text)).slice(0, 8) : []), [catalog.data, text]);
 
-  async function add() {
-    if (!text.trim()) return;
-    await attempt(() => api('/shopping', { body: { name: text } }));
+  async function add(body: { name: string; item_id?: number }) {
+    if (!body.name.trim()) return;
+    const r = await attempt(() => api('/shopping', { body }));
+    if (r && !r.added) toast('Steht schon auf der Liste');
     setText(''); reload();
   }
-  const toggle = async (i: ShoppingItem) => { await attempt(() => api(`/shopping/${i.id}`, { method: 'PATCH', body: { done: !i.done } })); reload(); };
+  async function toggle(i: ShoppingItem) {
+    const r = await attempt(() => api(`/shopping/${i.id}`, { method: 'PATCH', body: { done: !i.done } }));
+    if (r?.stocked) toast(`„${i.name}“ ist jetzt im Vorrat`);
+    else if (r && i.done && i.stocked_item_id) toast('Wieder aus dem Vorrat genommen');
+    reload();
+  }
+  const pack = (i: ShoppingItem) => (i.unit === '%' || !i.package_amount ? '1 Packung' : `${fmtNum(i.package_amount)} ${i.unit}`);
   const row = (i: ShoppingItem) => (
     <label key={i.id} className={'list-row check' + (i.done ? ' done' : '')}>
       <input type="checkbox" checked={!!i.done} onChange={() => toggle(i)} />
-      <span className="grow">{i.name}{i.amount && <span className="muted"> · {i.amount}</span>}</span>
+      <div className="grow">
+        <span>{i.name}{i.amount && <span className="muted"> · {i.amount}</span>}</span>
+        {i.item_id && !i.done && <div className="muted">{pack(i)} · kommt beim Abhaken in den Vorrat</div>}
+        {!!i.done && i.stocked_item_id && <div className="muted">{pack(i)} im Vorrat ergänzt</div>}
+      </div>
       <button className="icon-btn" aria-label="Löschen" onClick={async (e) => { e.preventDefault(); await attempt(() => api(`/shopping/${i.id}`, { method: 'DELETE' })); reload(); }}>✕</button>
     </label>
   );
   return (
     <>
-      <form className="row toolbar" onSubmit={(e) => { e.preventDefault(); add(); }}>
-        <input placeholder="Was fehlt?" value={text} onChange={(e) => setText(e.target.value)} enterKeyHint="done" />
+      <form className="row toolbar" onSubmit={(e) => { e.preventDefault(); add({ name: text }); }}>
+        <input type="search" placeholder="Was fehlt? Vorrat durchsuchen oder eintippen" value={text} onChange={(e) => setText(e.target.value)} enterKeyHint="done" />
         <button className="btn primary">Dazu</button>
       </form>
-      {data && !data.length && <p className="empty">Die Einkaufsliste ist leer.</p>}
+      {hits.length > 0 && (
+        <div className="list suggest">
+          {hits.map((i) => (
+            <button key={i.id} className="list-row" onClick={() => add({ name: i.name, item_id: i.id })}>
+              <Thumb name={i.name} category={i.category} />
+              <div className="grow">
+                <strong className="ellipsis">{i.name}</strong>
+                <div className="muted ellipsis">{[i.brand, i.consumed_at ? 'aufgebraucht' : `noch ${amountText(i)}`].filter(Boolean).join(' · ')}</div>
+              </div>
+              <span className="plus" aria-hidden>＋</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {data && !data.length && !text && <p className="empty">Die Einkaufsliste ist leer.</p>}
       <div className="list">{open.map(row)}</div>
       {done.length > 0 && (
         <>

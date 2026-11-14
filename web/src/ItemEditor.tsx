@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { guessUnit } from './icons';
 import { Thumb } from './Inventory';
-import { addDays, addMonths, api, attempt, Chips, fmtNum, round, Stepper, toast, type Item } from './lib';
+import { addDays, addMonths, api, attempt, Chips, confirmDialog, fmtNum, round, Stepper, toast, type Item } from './lib';
 
 const UNITS = [
   { value: 'g', label: 'Gramm' },
@@ -59,10 +59,11 @@ export function ItemEditor({ initial, onDone }: { initial: Partial<Item>; onDone
     onDone();
   }
   async function offerShopping() {
-    if (confirm(`„${name}“ ist aufgebraucht. Auf die Einkaufsliste setzen?`)) await attempt(() => api('/shopping', { body: { name } }), 'Auf der Einkaufsliste');
+    if (await confirmDialog('Aufgebraucht', { text: `„${name}“ ist leer. Auf die Einkaufsliste setzen?`, ok: 'Auf die Liste', cancel: 'Nein' })) await toShopping();
   }
+  const toShopping = () => attempt(() => api('/shopping', { body: { name, item_id: initial.id } }).then((r) => toast(r.added ? 'Auf der Einkaufsliste' : 'Steht schon auf der Einkaufsliste')));
   async function remove() {
-    if (!confirm(`„${name}“ aus dem Vorrat löschen?`)) return;
+    if (!await confirmDialog('Aus dem Vorrat löschen?', { text: `„${name}“ wird gelöscht.`, ok: 'Löschen', danger: true })) return;
     await attempt(() => api(`/items/${initial.id}`, { method: 'DELETE' }), 'Gelöscht');
     onDone();
   }
@@ -130,6 +131,7 @@ export function ItemEditor({ initial, onDone }: { initial: Partial<Item>; onDone
       )}
 
       <button className="btn primary" disabled={busy}>{editing ? 'Speichern' : 'In den Vorrat'}</button>
+      {editing && <button type="button" className="btn" onClick={toShopping}>Auf die Einkaufsliste</button>}
       {editing && (
         <div className="row">
           <button type="button" className="btn" onClick={usedUp}>Aufgebraucht</button>

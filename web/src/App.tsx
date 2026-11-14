@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Cook } from './Cook';
 import { Inventory } from './Inventory';
-import { api, startLive, Toasts, useLoad, type Item, type User } from './lib';
+import { api, Dialogs, startLive, Toasts, useLoad, type Item, type User } from './lib';
 import { More } from './More';
 import { Scanner } from './Scanner';
 import { Shopping } from './Shopping';
@@ -13,6 +13,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'einkauf', label: 'Einkauf', icon: 'M4 5h2l2 11h10l2-8H7M9 20h.01M17 20h.01' },
   { id: 'mehr', label: 'Mehr', icon: 'M5 12h.01M12 12h.01M19 12h.01' },
 ];
+let scanFrom = '';
 const readHash = (): { tab: Tab; scan: boolean } => {
   const h = location.hash.slice(1);
   return { tab: (TABS.find((t) => t.id === h)?.id || 'vorrat') as Tab, scan: h === 'scan' };
@@ -43,7 +44,7 @@ function Login({ setupNeeded, onDone }: { setupNeeded: boolean; onDone: () => vo
   }
   return (
     <main className="login">
-      <img src="/icon.svg" alt="" width={72} height={72} />
+      <img src="/icon.svg" alt="" width={84} height={84} />
       <h1>Vorrat</h1>
       <p className="muted">{mode === 'setup' ? 'Erster Start: Lege dein Admin-Konto an.' : mode === 'register' ? 'Du wurdest eingeladen. Lege dein Konto an.' : 'Anmelden'}</p>
       <form className="form" onSubmit={submit}>
@@ -62,18 +63,23 @@ function Main({ user, refreshUser }: { user: User; refreshUser: () => void }) {
   const items = useLoad<Item[]>('/items');
   useEffect(startLive, []);
   useEffect(() => {
-    const on = () => setNav(readHash());
+    const on = () => { const n = readHash(); if (!n.scan) scanFrom = ''; setNav(n); };
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);
   const go = (t: Tab) => { location.hash = t; };
-  const closeScan = useCallback(() => { location.hash = 'vorrat'; }, []);
+  // Schließen = einen Schritt zurück, damit man dort landet, wo man vorher war
+  const openScan = () => { scanFrom = location.hash || '#vorrat'; location.hash = 'scan'; };
+  const closeScan = useCallback(() => { if (scanFrom) { scanFrom = ''; history.back(); } else location.hash = 'vorrat'; }, []);
 
   return (
     <>
-      <header className="top"><h1>{TABS.find((t) => t.id === tab)!.label}</h1></header>
+      <header className="top">
+        <p className="eyebrow">{new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+        <h1>{TABS.find((t) => t.id === tab)!.label}</h1>
+      </header>
       <main className={`page page-${tab}`}>
-        {tab === 'vorrat' && <Inventory items={items.data} reload={items.reload} onScan={() => { location.hash = 'scan'; }} />}
+        {tab === 'vorrat' && <Inventory items={items.data} reload={items.reload} onScan={openScan} />}
         {tab === 'kochen' && <Cook />}
         {tab === 'einkauf' && <Shopping />}
         {tab === 'mehr' && <More user={user} refreshUser={refreshUser} />}
@@ -81,7 +87,7 @@ function Main({ user, refreshUser }: { user: User; refreshUser: () => void }) {
       <nav className="tabs">
         <div className="brand"><img src="/icon.svg" alt="" width={36} height={36} /><strong>Vorrat</strong></div>
         {TABS.slice(0, 2).map((t) => <TabBtn key={t.id} t={t} on={tab === t.id} go={go} />)}
-        <button className="fab" onClick={() => { location.hash = 'scan'; }} aria-label="Scannen und hinzufügen">
+        <button className="fab" onClick={openScan} aria-label="Scannen und hinzufügen">
           <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 8v8M12 8v8M16 8v8" /></svg>
           <span className="fab-label">Hinzufügen</span>
         </button>
@@ -118,6 +124,7 @@ export function App() {
         : state.user ? <Main user={state.user} refreshUser={load} />
         : <Login setupNeeded={state.setupNeeded} onDone={load} />}
       <Toasts />
+      <Dialogs />
     </>
   );
 }

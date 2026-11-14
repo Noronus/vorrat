@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { addDays, api, attempt, Chips, niceDate, onSync, Sheet, Stepper, toast, useLoad, type AiJob, type PlanEntry, type Recipe } from './lib';
+import { addDays, api, attempt, Chips, confirmDialog, fold, niceDate, onSync, scaleRecipe, Sheet, Stepper, toast, useLoad, type AiJob, type PlanEntry, type Recipe } from './lib';
 
 const SLOTS = ['Frühstück', 'Mittag', 'Abend'];
 
@@ -50,35 +50,142 @@ function useAiJob(kind: 'recipes' | 'plan') {
 }
 
 // ---------- Rezeptkarte ----------
-function RecipeCard({ recipe, open: initiallyOpen, actions }: { recipe: Recipe; open?: boolean; actions?: React.ReactNode }) {
+/** Zutaten je Schritt: von Claude, sonst grob über die Namen im Schritttext (jede Zutat beim ersten Schritt, der sie nennt) */
+function stepIngredients(r: Recipe): number[][] {
+  if (r.step_ingredients?.length === r.steps.length) return r.step_ingredients.map((l) => l.filter((i) => i >= 0 && i < r.ingredients.length));
+  const words = r.ingredients.map((i) => fold(i.name).split(/[^a-z]+/).filter((w) => w.length >= 4));
+  const seen = new Set<number>();
+  return r.steps.map((s) => {
+    const t = fold(s);
+    const hit = r.ingredients.map((_, k) => k).filter((k) => !seen.has(k) && words[k].some((w) => t.includes(w)));
+    hit.forEach((k) => seen.add(k));
+    return hit;
+  });
+}
+
+/** Abgehakte Zutaten beim Kochen. Bleiben einen Tag lang gespeichert, auch wenn man das Rezept schließt. */
+const CHECKS = 'vorrat:checks';
+function useChecks(title: string) {
+  const read = (): Record<string, { t: number; keys: string[] }> => { try { return JSON.parse(localStorage.getItem(CHECKS) || '{}'); } catch { return {}; } };
+  const [keys, setKeys] = useState<Set<string>>(() => {
+    const e = read()[title];
+    return new Set(e && Date.now() - e.t < 864e5 ? e.keys : []);
+  });
+  const store = (next: Set<string>) => {
+    setKeys(next);
+    try {
+      const all = read();
+      for (const k of Object.keys(all)) if (Date.now() - all[k].t > 864e5) delete all[k];
+      if (next.size) all[title] = { t: Date.now(), keys: [...next] }; else delete all[title];
+      localStorage.setItem(CHECKS, JSON.stringify(all));
+    } catch { /* ohne Speicher nur für diese Ansicht */ }
+  };
+  const toggle = (k: string) => { const n = new Set(keys); if (n.has(k)) n.delete(k); else n.add(k); store(n); };
+  return { keys, toggle, reset: () => store(new Set()) };
+}
+
+type Msg = { role: 'user' | 'claude'; text: string };
+/** Rückfragen und Änderungswünsche zum Rezept an Claude */
+function AskClaude({ recipe, onChange }: { recipe: Recipe; onChange: (r: Recipe) => void }) {
+  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    const message = text.trim();
+    if (!message || busy) return;
+    const history = msgs;
+    setMsgs([...history, { role: 'user', text: message }]);
+    setText('');
+    setBusy(true);
+    const res = await attempt(() => runJob({ kind: 'refine', recipe, message, history }));
+    setBusy(false);
+    if (!res) { setMsgs(history); setText(message); return; }
+    setMsgs([...history, { role: 'user', text: message }, { role: 'claude', text: (res.answer || 'Erledigt.') + (res.changed ? ' (Rezept angepasst)' : '') }]);
+    if (res.changed && res.recipe?.title) onChange({ ...res.recipe, id: recipe.id, source: recipe.source });
+  }
+  return (
+    <section className="ask">
+      <h4>Claude fragen</h4>
+      {msgs.map((m, k) => <p key={k} className={'bubble ' + m.role}>{m.text}</p>)}
+      {busy && <div className="progress" />}
+      <form className="row" onSubmit={send}>
+        <input placeholder="z. B. Geht das ohne Wok? Mach es schärfer." value={text} onChange={(e) => setText(e.target.value)} maxLength={1000} disabled={busy} />
+        <button className="btn primary" disabled={busy || !text.trim()}>{busy ? '…' : 'Senden'}</button>
+      </form>
+    </section>
+  );
+}
+
+function RecipeCard({ recipe, open: initiallyOpen, actions, onRefine }: {
+  recipe: Recipe; open?: boolean;
+  /** Bekommt das Rezept mit der eingestellten Portionszahl */
+  actions?: (r: Recipe) => React.ReactNode;
+  /** Wenn gesetzt, kann man Claude zum Rezept fragen; bekommt das angepasste Rezept */
+  onRefine?: (r: Recipe) => void;
+}) {
   const [open, setOpen] = useState(!!initiallyOpen);
-  const miss = missing(recipe);
+  const [servings, setServings] = useState(recipe.servings || 2);
+  useEffect(() => setServings(recipe.servings || 2), [recipe]);
+  const r = scaleRecipe(recipe, servings);
+  const checks = useChecks(recipe.title);
+  const perStep = stepIngredients(r);
+  const added = new Set([...checks.keys].map((k) => Number(k.split('-')[1])));
+  const miss = missing(r);
   return (
     <article className="card">
       <button className="card-head" onClick={() => setOpen(!open)} aria-expanded={open}>
         <div className="grow">
-          <h3>{recipe.title}</h3>
+          <h3>{r.title}</h3>
           <div className="muted">
-            {[recipe.time_minutes && `${recipe.time_minutes} min`, recipe.servings && `${recipe.servings} Port.`, miss.length ? `${miss.length} fehlt` : recipe.ingredients.some((i) => i.in_stock) && 'alles da'].filter(Boolean).join(' · ')}
+            {[r.time_minutes && `${r.time_minutes} min`, r.servings && `${r.servings} Port.`, miss.length ? `${miss.length} fehlt` : r.ingredients.some((i) => i.in_stock) && 'alles da'].filter(Boolean).join(' · ')}
           </div>
         </div>
         <span className="chev">{open ? '▾' : '▸'}</span>
       </button>
-      {recipe.description && <p>{recipe.description}</p>}
-      {!!recipe.uses_expiring?.length && <div className="chips">{recipe.uses_expiring.map((n) => <span key={n} className="badge soon">verbraucht {n}</span>)}</div>}
+      {r.description && <p>{r.description}</p>}
+      {!!r.uses_expiring?.length && <div className="chips">{r.uses_expiring.map((n) => <span key={n} className="badge soon">verbraucht {n}</span>)}</div>}
       {open && (
         <>
+          <div className="row between"><span className="lbl">Portionen</span><Stepper value={servings} onChange={setServings} max={20} /></div>
           <h4>Zutaten</h4>
           <ul className="ingredients">
-            {recipe.ingredients.map((i, k) => (
-              <li key={k} className={i.in_stock === false ? 'missing' : ''}><span>{i.amount}</span> {i.name}{i.in_stock === false && <em> fehlt</em>}</li>
+            {r.ingredients.map((i, k) => (
+              <li key={k} className={(i.in_stock === false ? 'missing' : '') + (added.has(k) ? ' added' : '')}><span>{i.amount}</span> {i.name}{i.in_stock === false && <em> fehlt</em>}</li>
             ))}
           </ul>
-          <h4>Zubereitung</h4>
-          <ol className="steps">{recipe.steps.map((s, k) => <li key={k}>{s}</li>)}</ol>
+          <div className="row between">
+            <h4>Zubereitung</h4>
+            {checks.keys.size > 0 && <button type="button" className="link" onClick={checks.reset}>Haken zurücksetzen</button>}
+          </div>
+          <ol className="steps">
+            {r.steps.map((s, k) => {
+              const ings = perStep[k] || [];
+              const done = ings.length > 0 && ings.every((i) => checks.keys.has(`${k}-${i}`));
+              return (
+                <li key={k} className={done ? 'done' : ''}>
+                  <p>{s}</p>
+                  {ings.length > 0 && (
+                    <div className="step-ings">
+                      {ings.map((i) => {
+                        const key = `${k}-${i}`, on = checks.keys.has(key);
+                        return (
+                          <button type="button" key={i} className={'step-ing' + (on ? ' on' : '')} aria-pressed={on} onClick={() => checks.toggle(key)}>
+                            <span className="tick" aria-hidden>{on ? '✓' : ''}</span>
+                            {r.ingredients[i].amount && <b>{r.ingredients[i].amount}</b>} {r.ingredients[i].name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          {onRefine && <AskClaude recipe={r} onChange={onRefine} />}
         </>
       )}
-      {actions && <div className="row wrap"><Cooked recipe={recipe} />{actions}</div>}
+      {actions && <div className="row wrap"><Cooked recipe={r} onDone={checks.reset} />{actions(r)}</div>}
     </article>
   );
 }
@@ -139,7 +246,7 @@ async function fetchQuestions(params: object): Promise<Question[]> {
 
 // ---------- Gekocht: Zutaten vom Vorrat abziehen ----------
 type Deduction = { item_id: number; name: string; brand: string | null; unit: string; remaining: number; ingredient: string; amount: number };
-function Cooked({ recipe }: { recipe: Recipe }) {
+function Cooked({ recipe, onDone }: { recipe: Recipe; onDone?: () => void }) {
   const [busy, setBusy] = useState(false);
   const [list, setList] = useState<(Deduction & { on: boolean; text: string })[] | null>(null);
   async function load() {
@@ -158,8 +265,10 @@ function Cooked({ recipe }: { recipe: Recipe }) {
     const res = await attempt(() => api('/items/consume', { body: { deductions } }));
     if (!res) return;
     setList(null);
+    onDone?.();
     toast(`${res.changed} Vorräte angepasst`);
-    if (res.usedUp.length && confirm(`Aufgebraucht: ${res.usedUp.join(', ')}. Auf die Einkaufsliste setzen?`)) await addToShopping(res.usedUp.map((name: string) => ({ name })));
+    if (res.usedUp.length && await confirmDialog('Aufgebraucht', { text: `${res.usedUp.join(', ')} ist jetzt leer. Auf die Einkaufsliste setzen?`, ok: 'Auf die Liste', cancel: 'Nein' }))
+      await addToShopping(res.usedUp.map((name: string) => ({ name })));
   }
   return (
     <>
@@ -194,8 +303,10 @@ function Suggestions({ aiReady }: { aiReady: boolean }) {
   const [servings, setServings] = useState(() => Number(localStorage.getItem('vorrat:servings')) || 2);
   const [plan, setPlan] = useState<Recipe | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
-  const recipes: Recipe[] = job?.status === 'done' ? job.result?.recipes || [] : [];
-  const [open, setOpen] = useState<Recipe | null>(null);
+  const [edits, setEdits] = useState<Record<string, Recipe>>({});
+  const recipes: Recipe[] = (job?.status === 'done' ? job.result?.recipes || [] : []).map((r: Recipe, k: number) => edits[`${job!.id}-${k}`] || r);
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const open = openIdx === null ? null : recipes[openIdx] || null;
   const [asking, setAsking] = useState(false);
   const [questions, setQuestions] = useState<Question[] | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -218,6 +329,10 @@ function Suggestions({ aiReady }: { aiReady: boolean }) {
   return (
     <>
       <div className="card hero">
+        <div className="hero-head">
+          <span aria-hidden>🍳</span>
+          <div><h2>Was gibt’s heute?</h2><p className="muted">Claude schaut in deinen Vorrat und schlägt 6 Gerichte vor.</p></div>
+        </div>
         <button className="btn primary big" disabled={busy || !aiReady} onClick={ask}>
           {running ? 'Claude sucht 6 Gerichte aus …' : asking ? 'Claude überlegt Rückfragen …' : 'Was kann ich kochen?'}
         </button>
@@ -242,7 +357,7 @@ function Suggestions({ aiReady }: { aiReady: boolean }) {
       {recipes.length > 0 && (
         <div className="tiles">
           {recipes.map((r, k) => (
-            <button key={job!.id + '-' + k} className="tile" onClick={() => setOpen(r)}>
+            <button key={job!.id + '-' + k} className="tile" onClick={() => setOpenIdx(k)}>
               <span className="tile-emoji" aria-hidden>{r.emoji || '🍽️'}</span>
               <strong>{r.title}</strong>
               <span className="muted">{[r.time_minutes && `${r.time_minutes} min`, missing(r).length ? `${missing(r).length} fehlt` : 'alles da'].filter(Boolean).join(' · ')}</span>
@@ -252,14 +367,14 @@ function Suggestions({ aiReady }: { aiReady: boolean }) {
         </div>
       )}
       {open && (
-        <Sheet title={open.title} onClose={() => setOpen(null)}>
-          <RecipeCard recipe={open} open actions={
+        <Sheet title={open.title} onClose={() => setOpenIdx(null)} full>
+          <RecipeCard recipe={open} open onRefine={(r) => setEdits({ ...edits, [`${job!.id}-${openIdx}`]: r })} actions={(r) => (
             <>
-              <button className="btn small" disabled={saved.has(open.title)} onClick={async () => { if (await saveRecipe(open)) { setSaved(new Set(saved).add(open.title)); toast('Rezept gespeichert'); } }}>{saved.has(open.title) ? 'Gespeichert' : 'Speichern'}</button>
-              <button className="btn small" onClick={() => setPlan(open)}>Einplanen</button>
-              {missing(open).length > 0 && <button className="btn small" onClick={() => addToShopping(missing(open))}>Fehlendes einkaufen</button>}
+              <button className="btn small" disabled={saved.has(r.title)} onClick={async () => { if (await saveRecipe(r)) { setSaved(new Set(saved).add(r.title)); toast('Rezept gespeichert'); } }}>{saved.has(r.title) ? 'Gespeichert' : 'Speichern'}</button>
+              <button className="btn small" onClick={() => setPlan(r)}>Einplanen</button>
+              {missing(r).length > 0 && <button className="btn small" onClick={() => addToShopping(missing(r))}>Fehlendes einkaufen</button>}
             </>
-          } />
+          )} />
         </Sheet>
       )}
       {questions && (
@@ -296,7 +411,8 @@ function RecipeForm({ initial, onDone }: { initial: Recipe | null; onDone: () =>
   const [ingredients, setIngredients] = useState((initial?.ingredients || []).map((i) => `${i.amount} ${i.name}`.trim()).join('\n'));
   const [steps, setSteps] = useState((initial?.steps || []).join('\n'));
   async function save() {
-    const body = { title, servings, time_minutes: Number(time) || null, description: initial?.description, ingredients: parseIngredients(ingredients), steps: steps.split('\n').map((s) => s.trim()).filter(Boolean) };
+    const sameText = initial && ingredients === (initial.ingredients || []).map((i) => `${i.amount} ${i.name}`.trim()).join('\n') && steps === (initial.steps || []).join('\n');
+    const body = { title, servings, step_ingredients: sameText ? initial.step_ingredients : null, time_minutes: Number(time) || null, description: initial?.description, ingredients: parseIngredients(ingredients), steps: steps.split('\n').map((s) => s.trim()).filter(Boolean) };
     const ok = await attempt(() => (initial?.id ? api(`/recipes/${initial.id}`, { method: 'PUT', body }) : api('/recipes', { body })), 'Gespeichert');
     if (ok) onDone();
   }
@@ -315,9 +431,15 @@ function RecipeForm({ initial, onDone }: { initial: Recipe | null; onDone: () =>
 function Recipes() {
   const { data, reload } = useLoad<Recipe[]>('/recipes');
   const [q, setQ] = useState('');
-  const [open, setOpen] = useState<Recipe | null>(null);
+  const [open, setOpenRaw] = useState<Recipe | null>(null);
+  const [changed, setChanged] = useState(false);
+  const setOpen = (r: Recipe | null) => { setOpenRaw(r); setChanged(false); };
   const [form, setForm] = useState<Recipe | 'new' | null>(null);
   const [plan, setPlan] = useState<Recipe | null>(null);
+  async function update(r: Recipe) {
+    if (!await attempt(() => api(`/recipes/${r.id}`, { method: 'PUT', body: r }), 'Gespeichert')) return;
+    setOpenRaw(r); setChanged(false); reload();
+  }
   const shown = (data || []).filter((r) => r.title.toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <>
@@ -339,14 +461,15 @@ function Recipes() {
       </div>
       {open && (
         <Sheet title="Rezept" onClose={() => setOpen(null)} full>
-          <RecipeCard recipe={open} open actions={
+          <RecipeCard recipe={open} open onRefine={(r) => { setOpenRaw(r); setChanged(true); }} actions={(r) => (
             <>
-              <button className="btn small" onClick={() => setPlan(open)}>Einplanen</button>
-              <button className="btn small" onClick={() => addToShopping(open.ingredients)}>Zutaten einkaufen</button>
+              {(changed || r.servings !== open.servings) && <button className="btn small primary" onClick={() => update(r)}>{changed ? 'Änderung speichern' : `Mit ${r.servings} Port. speichern`}</button>}
+              <button className="btn small" onClick={() => setPlan(r)}>Einplanen</button>
+              <button className="btn small" onClick={() => addToShopping(r.ingredients)}>Zutaten einkaufen</button>
               <button className="btn small" onClick={() => { setForm(open); setOpen(null); }}>Bearbeiten</button>
-              <button className="btn small danger" onClick={async () => { if (confirm('Rezept löschen?')) { await attempt(() => api(`/recipes/${open.id}`, { method: 'DELETE' })); setOpen(null); reload(); } }}>Löschen</button>
+              <button className="btn small danger" onClick={async () => { if (await confirmDialog('Rezept löschen?', { text: `„${open.title}“ wird endgültig gelöscht.`, ok: 'Löschen', danger: true })) { await attempt(() => api(`/recipes/${open.id}`, { method: 'DELETE' })); setOpen(null); reload(); } }}>Löschen</button>
             </>
-          } />
+          )} />
         </Sheet>
       )}
       {form && (
@@ -421,7 +544,7 @@ function Plan({ aiReady }: { aiReady: boolean }) {
           </div>
         </Sheet>
       )}
-      {open && <Sheet title="Rezept" onClose={() => setOpen(null)} full><RecipeCard recipe={open} open actions={<button className="btn small" onClick={() => addToShopping(open.ingredients)}>Zutaten einkaufen</button>} /></Sheet>}
+      {open && <Sheet title="Rezept" onClose={() => setOpen(null)} full><RecipeCard recipe={open} open actions={(r) => <button className="btn small" onClick={() => addToShopping(r.ingredients)}>Zutaten einkaufen</button>} /></Sheet>}
       {auto && <AutoPlan onClose={() => setAuto(false)} onApplied={() => { reload(); recipes.reload(); }} />}
     </>
   );

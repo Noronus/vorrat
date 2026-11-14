@@ -10,6 +10,11 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Insets;
+import android.graphics.Outline;
+import android.os.Build;
+import android.view.View;
+import android.view.ViewOutlineProvider;
+import android.window.OnBackInvokedDispatcher;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
@@ -30,12 +35,20 @@ import android.widget.FrameLayout;
 
 import androidx.core.content.FileProvider;
 
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.ResultPoint;
 import com.google.zxing.integration.android.IntentIntegrator;
+import com.journeyapps.barcodescanner.BarcodeCallback;
+import com.journeyapps.barcodescanner.BarcodeResult;
+import com.journeyapps.barcodescanner.DecoratedBarcodeView;
+import com.journeyapps.barcodescanner.DefaultDecoderFactory;
 import com.google.zxing.integration.android.IntentResult;
 
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Hülle um die Vorrat-Web-App. Nativ sind: Barcode-Scan (läuft komplett auf dem Gerät),
@@ -46,12 +59,18 @@ import java.io.File;
 public class MainActivity extends Activity {
     static final String PREFS = "vorrat";
     static final String DEFAULT_SERVER = "http://";
-    private static final int REQ_FILE = 1, REQ_PERM_CAMERA = 2, REQ_PERM_NOTIF = 3;
+    private static final int REQ_FILE = 1, REQ_PERM_CAMERA = 2, REQ_PERM_NOTIF = 3, REQ_PERM_SCAN = 4;
 
     private WebView web;
     private SharedPreferences prefs;
     private ValueCallback<Uri[]> fileCallback;
     private Uri photoUri;
+    private FrameLayout root;
+    /** Kamera direkt in der Seite (über der freien Fläche des Scanners) */
+    private DecoratedBarcodeView scanView;
+    private float[] scanRect;
+    private String lastCode;
+    private long lastCodeAt;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -60,7 +79,7 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         ReminderWorker.createChannel(this);
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(getColor(R.color.bg));
         web = new WebView(this);
         web.setBackgroundColor(getColor(R.color.bg));
@@ -110,6 +129,69 @@ public class MainActivity extends Activity {
         else web.loadUrl(serverUrl());
 
         if (prefs.getBoolean("notif", false)) ReminderWorker.schedule(this);
+
+        // Ab Android 16 (targetSdk 36) ruft das System onBackPressed nicht mehr auf
+        if (Build.VERSION.SDK_INT >= 33)
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::handleBack);
+    }
+
+    /** Zurück: erst offenes Fenster in der Web-App schließen, dann eine Seite zurück, sonst App in den Hintergrund */
+    private void handleBack() {
+        web.evaluateJavascript("window.vorratBack ? window.vorratBack() : false", res -> {
+            if ("true".equals(res)) return;
+            if (web.canGoBack()) web.goBack();
+            else moveTaskToBack(true);
+        });
+    }
+
+    // ---------- Eingebettete Kamera ----------
+    private void showScanView(float[] r) {
+        scanRect = r;
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_PERM_SCAN);
+            return;
+        }
+        float d = getResources().getDisplayMetrics().density;
+        if (scanView == null) {
+            scanView = new DecoratedBarcodeView(this);
+            scanView.setStatusText("");
+            scanView.getBarcodeView().setDecoderFactory(new DefaultDecoderFactory(
+                    Arrays.asList(BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E)));
+            float radius = 24 * d;
+            scanView.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View v, Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), radius); }
+            });
+            scanView.setClipToOutline(true);
+            scanView.decodeContinuous(new BarcodeCallback() {
+                @Override
+                public void barcodeResult(BarcodeResult result) {
+                    String code = result.getText();
+                    long now = System.currentTimeMillis();
+                    // Derselbe Code mehrfach hintereinander: nur einmal melden
+                    if (code == null || (code.equals(lastCode) && now - lastCodeAt < 2500)) return;
+                    lastCode = code;
+                    lastCodeAt = now;
+                    emit("vorrat:native-scan", JSONObject.quote(code));
+                }
+
+                @Override
+                public void possibleResultPoints(List<ResultPoint> points) { }
+            });
+        }
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.round(r[2] * d), Math.round(r[3] * d));
+        lp.leftMargin = Math.round(r[0] * d);
+        lp.topMargin = Math.round(r[1] * d);
+        if (scanView.getParent() == null) root.addView(scanView, lp);
+        else scanView.setLayoutParams(lp);
+        scanView.resume();
+    }
+
+    private void hideScanView() {
+        scanRect = null;
+        if (scanView == null) return;
+        scanView.pause();
+        root.removeView(scanView);
     }
 
     private String serverUrl() {
@@ -213,6 +295,10 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
         if (requestCode == REQ_PERM_CAMERA) openPhotoChooser();
+        if (requestCode == REQ_PERM_SCAN) {
+            if (granted && scanRect != null) showScanView(scanRect);
+            else if (!granted) emit("vorrat:toast", JSONObject.quote("Ohne Kamera-Erlaubnis geht kein Scan. Du kannst den Barcode eintippen."));
+        }
         if (requestCode == REQ_PERM_NOTIF) applyNotifications(granted);
     }
 
@@ -233,6 +319,23 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void scan() {
             runOnUiThread(MainActivity.this::startScan);
+        }
+
+        @JavascriptInterface
+        public void scanStart(float x, float y, float w, float h) {
+            runOnUiThread(() -> showScanView(new float[]{x, y, w, h}));
+        }
+
+        @JavascriptInterface
+        public void scanStop() {
+            runOnUiThread(MainActivity.this::hideScanView);
+        }
+
+        @JavascriptInterface
+        public boolean torch(boolean on) {
+            if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH)) return false;
+            runOnUiThread(() -> { if (scanView != null) { if (on) scanView.setTorchOn(); else scanView.setTorchOff(); } });
+            return true;
         }
 
         @JavascriptInterface
@@ -267,8 +370,13 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) web.goBack();
-        else super.onBackPressed();
+        handleBack();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (scanView != null && scanView.getParent() != null) scanView.resume();
     }
 
     @Override
@@ -280,6 +388,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (scanView != null) scanView.pause();
         CookieManager.getInstance().flush(); // Anmeldung sicher auf die Platte schreiben
     }
 }
