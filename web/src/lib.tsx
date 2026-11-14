@@ -42,7 +42,7 @@ function proxyLoginNeeded() {
 
 /** Brücke zur Android-App (nur dort vorhanden) */
 export const native: undefined | {
-  scan(): void; scanStart?(x: number, y: number, w: number, h: number): void; scanStop?(): void; torch?(on: boolean): boolean;
+  scan(): void; share?(title: string, text: string): void; scanStart?(x: number, y: number, w: number, h: number): void; scanStop?(): void; torch?(on: boolean): boolean;
   notificationsEnabled(): boolean; setNotifications(on: boolean): void; testNotification(): void; changeServer(): void;
 } = (window as any).VorratNative;
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
@@ -155,6 +155,39 @@ export function Toasts() {
 /** Führt eine Aktion aus und zeigt Fehler als Toast */
 export async function attempt<T>(fn: () => Promise<T>, okMsg?: string): Promise<T | undefined> {
   try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e: any) { toast(e.message || 'Fehler'); return undefined; }
+}
+
+// ---------- Teilen ----------
+/** Teilt Text über das Teilen-Menü des Geräts; ohne das wird er kopiert */
+export async function shareText(title: string, text: string) {
+  if (native?.share) return native.share(title, text);
+  if (navigator.share) {
+    try { await navigator.share({ title, text }); return; } catch (e: any) { if (e?.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Ohne HTTPS gibt es keine Zwischenablage-API: über ein verstecktes Textfeld kopieren
+    const t = document.createElement('textarea');
+    t.value = text;
+    t.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(t);
+    t.select();
+    const ok = document.execCommand('copy');
+    t.remove();
+    if (!ok) return toast('Kopieren hat nicht geklappt');
+  }
+  toast('In die Zwischenablage kopiert');
+}
+export function recipeText(r: Recipe) {
+  const meta = [r.servings && `${r.servings} Portionen`, r.time_minutes && `${r.time_minutes} min`].filter(Boolean).join(' · ');
+  return [
+    `${r.emoji ? r.emoji + ' ' : ''}${r.title}`,
+    meta,
+    r.description || '',
+    `Zutaten:\n${r.ingredients.map((i) => `- ${[i.amount, i.name].filter(Boolean).join(' ')}`).join('\n')}`,
+    `Zubereitung:\n${r.steps.map((s, k) => `${k + 1}. ${s}`).join('\n')}`,
+  ].filter(Boolean).join('\n\n');
 }
 
 // ---------- Rückfragen (statt confirm/prompt des Browsers) ----------

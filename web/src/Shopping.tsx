@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Thumb } from './Inventory';
-import { amountText, api, attempt, fmtNum, matches, promptDialog, toast, useLoad, type Item, type ShoppingItem } from './lib';
+import { amountText, api, attempt, fmtNum, matches, promptDialog, shareText, toast, useLoad, type Item, type ShoppingItem } from './lib';
 
 export function Shopping() {
   const { data, reload } = useLoad<ShoppingItem[]>('/shopping');
@@ -69,6 +69,12 @@ export function Shopping() {
         </div>
       )}
       {data && !data.length && !text && <p className="empty">Die Einkaufsliste ist leer.</p>}
+      {open.length > 0 && (
+        <div className="row between section-head">
+          <span className="lbl">Offen ({open.length})</span>
+          <button className="link" onClick={() => shareText('Einkaufsliste', `Einkaufsliste:\n${open.map((i) => `- ${i.name}${i.amount ? ` (${i.amount})` : i.item_id && i.unit !== '%' && i.package_amount ? ` (${fmtNum(i.package_amount)} ${i.unit})` : ''}`).join('\n')}`)}>Teilen</button>
+        </div>
+      )}
       <div className="list">{open.map(row)}</div>
       {done.length > 0 && (
         <>

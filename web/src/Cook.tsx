@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { addDays, api, attempt, Chips, confirmDialog, fold, niceDate, onSync, scaleRecipe, Sheet, Stepper, toast, useLoad, type AiJob, type PlanEntry, type Recipe } from './lib';
+import { addDays, api, attempt, Chips, confirmDialog, fold, niceDate, onSync, recipeText, scaleRecipe, shareText, Sheet, Stepper, toast, useLoad, type AiJob, type PlanEntry, type Recipe } from './lib';
 
 const SLOTS = ['Frühstück', 'Mittag', 'Abend'];
 
@@ -185,7 +185,7 @@ function RecipeCard({ recipe, open: initiallyOpen, actions, onRefine }: {
           {onRefine && <AskClaude recipe={r} onChange={onRefine} />}
         </>
       )}
-      {actions && <div className="row wrap"><Cooked recipe={r} onDone={checks.reset} />{actions(r)}</div>}
+      {actions && <div className="row wrap"><Cooked recipe={r} onDone={checks.reset} />{actions(r)}<button className="btn small" onClick={() => shareText(r.title, recipeText(r))}>Teilen</button></div>}
     </article>
   );
 }

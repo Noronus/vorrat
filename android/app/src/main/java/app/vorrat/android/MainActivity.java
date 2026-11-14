@@ -322,6 +322,13 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void share(String title, String text) {
+            Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, title).putExtra(Intent.EXTRA_TEXT, text);
+            runOnUiThread(() -> startActivity(Intent.createChooser(send, title)));
+        }
+
+        @JavascriptInterface
         public void scanStart(float x, float y, float w, float h) {
             runOnUiThread(() -> showScanView(new float[]{x, y, w, h}));
         }
